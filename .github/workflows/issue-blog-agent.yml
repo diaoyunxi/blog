@@ -1,4 +1,4 @@
-name: Issue → Blog (CN/EN) Agent
+name: Issue → Blog (CN) Agent
 
 on:
   issues:
@@ -38,6 +38,8 @@ jobs:
       SEARCH_REGION: ${{ vars.SEARCH_REGION || 'cn-zh' }}
       SEARCH_LANG: ${{ vars.SEARCH_LANG || 'zh-cn' }}
       MAX_ROUNDS: ${{ vars.MAX_ROUNDS || '16' }}
+      MAX_429_RETRIES: ${{ vars.MAX_429_RETRIES || '5' }}
+      BASE_BACKOFF: ${{ vars.BASE_BACKOFF || '2' }}
       BASE_BRANCH: ${{ github.event.repository.default_branch }}
 
     steps:
@@ -108,7 +110,7 @@ jobs:
             echo "ISSUE_BODY_FILE=$RUNNER_TEMP/issue/body.md"
           } >> "$GITHUB_ENV"
 
-      - name: 运行 Agent 生成 cn.md / en.md
+      - name: 运行 Agent 生成 cn.md
         id: agent
         run: python .github/ci/main.py
 
@@ -118,7 +120,6 @@ jobs:
           BRANCH: ${{ steps.agent.outputs.branch }}
           TITLE: ${{ steps.agent.outputs.title }}
           CN_PATH: ${{ steps.agent.outputs.cn_path }}
-          EN_PATH: ${{ steps.agent.outputs.en_path }}
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
           ISSUE_URL: ${{ github.event.issue.html_url }}
           SUMMARY: ${{ steps.agent.outputs.summary }}
@@ -136,8 +137,8 @@ jobs:
             git checkout -b "$BRANCH"
           fi
 
-          git add "$CN_PATH" "$EN_PATH"
-          git commit -m "$TITLE" -m "由 Issue #$ISSUE_NUMBER 自动生成双语文章
+          git add "$CN_PATH"
+          git commit -m "$TITLE" -m "由 Issue #$ISSUE_NUMBER 自动生成中文文章
 
           目录: $FULL_DIR
           Issue: $ISSUE_URL
@@ -155,17 +156,16 @@ jobs:
           SUMMARY: ${{ steps.agent.outputs.summary }}
           FULL_DIR: ${{ steps.agent.outputs.full_dir }}
           CN_PATH: ${{ steps.agent.outputs.cn_path }}
-          EN_PATH: ${{ steps.agent.outputs.en_path }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           BODY="Closes #$ISSUE_NUMBER
 
-          由 Issue #$ISSUE_NUMBER 自动生成的双语文章。
+          由 Issue #$ISSUE_NUMBER 自动生成的中文文章。
 
           - 目录：\`$FULL_DIR\`
-          - 文件：\`$CN_PATH\`、\`$EN_PATH\`
+          - 文件：\`$CN_PATH\`
           - 摘要：$SUMMARY
 
           > 本 PR 由 AI Agent 生成，请人工校对事实与链接后再合并。"
@@ -188,7 +188,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh issue comment "$ISSUE_NUMBER" --body "🤖 已生成双语文章并提交 PR：#${PR_NUMBER}
+          gh issue comment "$ISSUE_NUMBER" --body "🤖 已生成中文文章并提交 PR：#${PR_NUMBER}
           - 目录：\`${FULL_DIR}\`
           - 链接：${PR_URL}
 

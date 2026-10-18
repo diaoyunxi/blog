@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GitHub Issue -> 双语博客(CN/EN) Agent
+GitHub Issue -> 中文博客 Agent
 
 输入：一个 GitHub Issue 的标题 + 正文（需求）
-输出：在 <BLOG_DIR>/<分类>/<主题目录>/ 下生成 cn.md 与 en.md，
+输出：在 <BLOG_DIR>/<中文分类>/<中文主题目录>/ 下生成 cn.md，
       并把结果目录 / 分支名 / 标题写入 $GITHUB_OUTPUT 供 workflow 使用。
 
 环境变量：
-  LLM_BASE_URL / LLM_API_KEY / LLM_MODEL   模型（OpenAI 兼容 Chat Completions）
+  LLM_BASE_URL / LLM_API_KEY / LLM_MODEL   模型（OpenAI 兼容 Chat Completions，需支持 function calling）
   BLOG_DIR                                 博客根目录名（默认 blog）
-  ISSUE_BODY_FILE / ISSUE_TITLE_FILE        issue 内容文件（workflow 写入，避免 shell 注入）
+  ISSUE_BODY_FILE / ISSUE_TITLE_FILE       issue 内容文件（workflow 写入，避免 shell 注入）
   ISSUE_BODY / ISSUE_TITLE                 也可直接由环境变量传入
   ISSUE_NUMBER / ISSUE_URL / ISSUE_CREATED_AT / ISSUE_AUTHOR
-  SEARCH_PROVIDER                          auto | tavily | serper | brave | ddg
+  SEARCH_PROVIDER                          auto | tavily | serper | brave | ddg | bing
   SEARCH_API_KEY                           可选，搜索引擎 key（tavily/serper/brave）
   SEARCH_REGION / SEARCH_LANG              可选
   MAX_ROUNDS                               最大工具调用轮数（默认 16）
+  MAX_429_RETRIES                          429 最大退避次数（默认 5，等待 2/4/8/16/32s）
   GITHUB_OUTPUT / GITHUB_STEP_SUMMARY      CI 输出
 """
 
@@ -28,14 +29,17 @@ import pathlib
 import re
 import sys
 import textwrap
+import time
 from datetime import datetime, timezone, timedelta
 
 import requests
 from bs4 import BeautifulSoup
 
 try:
+    import openai
     from openai import OpenAI
 except ImportError:  # 仅在真正调用模型时才需要
+    openai = None
     OpenAI = None
 
 
@@ -51,6 +55,8 @@ BASE_URL = (os.getenv("LLM_BASE_URL") or "https://api.openai.com/v1").rstrip("/"
 API_KEY = os.getenv("LLM_API_KEY") or ""
 MAX_ROUNDS = int(os.getenv("MAX_ROUNDS") or "16")
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE") or "0.2")
+MAX_429_RETRIES = int(os.getenv("MAX_429_RETRIES") or "5")   # 2/4/8/16/32s
+BASE_BACKOFF = float(os.getenv("BASE_BACKOFF") or "2")       # 首次等待秒数
 
 UA = "Mozilla/5.0 (compatible; BlogIssueBot/1.0; +https://github.com)"
 
@@ -94,12 +100,18 @@ except Exception:
 
 
 # ----------------------------------------------------------------------------
-# 目录工具
+# 目录工具（目录名强制中文）
 # ----------------------------------------------------------------------------
+# 中日韩统一表意文字（含扩展 A 区）
+CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+# 目录名只保留汉字与数字，其余（英文、空格、符号）全部丢弃
+SEG_KEEP_RE = re.compile(r"[^\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff0-9]")
+
+
 def blog_tree(max_depth: int = 3, max_entries: int = 400) -> str:
     """列出博客目录结构，供模型判断分类。"""
     if not BLOG_ROOT.exists():
-        return f"({BLOG_DIR_NAME}/ 目录尚不存在，需要你自行创建分类)"
+        return f"({BLOG_DIR_NAME}/ 目录尚不存在，需要你自行创建中文分类)"
     lines: list[str] = []
     count = 0
 
@@ -129,22 +141,21 @@ def blog_tree(max_depth: int = 3, max_entries: int = 400) -> str:
     return "\n".join(lines) if lines else "(目录为空)"
 
 
-SEG_RE = re.compile(r"[^\w\u4e00-\u9fff.\-]", re.UNICODE)
-
-
-def sanitize_segment(seg: str, max_len: int = 60) -> str:
-    """目录/分支名单段清洗：保留中英文、数字、点、连字符。"""
-    s = seg.strip().replace("\\", "/")
+def sanitize_segment(seg: str, max_len: int = 40) -> str:
+    """目录名单段清洗：只保留汉字与数字；不含汉字则报错，逼模型改用中文命名。"""
+    s = (seg or "").strip().replace("\\", "/")
     if s in ("", ".", ".."):
-        return ""
-    s = re.sub(r"\s+", "-", s)
-    s = SEG_RE.sub("-", s)
-    s = re.sub(r"-{2,}", "-", s).strip("-.")
-    return (s or "topic")[:max_len]
+        raise ValueError("目录段为空")
+    s = SEG_KEEP_RE.sub("", s)
+    if not CJK_RE.search(s):
+        raise ValueError(
+            f"目录段 {seg!r} 不含中文，已被拒绝——所有目录名必须使用中文，请改用中文重新调用（如 人工智能/检索增强生成）"
+        )
+    return s[:max_len] or "未命名"
 
 
 def sanitize_rel_dir(raw: str) -> str:
-    """把模型给出的目录清洗为相对 blog 根的安全路径。"""
+    """把模型给出的目录清洗为相对 blog 根的安全中文路径。"""
     raw = (raw or "").strip().replace("\\", "/")
     raw = raw.lstrip("/")
     if raw.lower().startswith(BLOG_DIR_NAME.lower() + "/"):
@@ -156,14 +167,16 @@ def sanitize_rel_dir(raw: str) -> str:
     return "/".join(parts)
 
 
-def sanitize_branch(raw: str) -> str:
-    parts = [sanitize_segment(p, 60) for p in (raw or "").replace("\\", "/").split("/")]
+def sanitize_branch(rel: str) -> str:
+    """分支名 = 博客根目录名 + 中文目录路径（根目录名本身不做中文过滤）。"""
+    raw = (rel or "").replace("\\", "/").strip("/")
+    parts = [sanitize_segment(p, 60) for p in raw.split("/")]
     parts = [p for p in parts if p]
     if not parts:
         raise ValueError("分支名为空")
-    branch = "/".join(parts)
+    branch = "/".join([BLOG_DIR_NAME] + parts)
     branch = branch.replace("..", "").replace("//", "/").strip("/")
-    return branch or "blog/auto-article"
+    return branch or f"{BLOG_DIR_NAME}/未命名"
 
 
 # ----------------------------------------------------------------------------
@@ -352,8 +365,8 @@ def fetch_url(url: str, max_chars: int = 12000) -> str:
 RESULT: dict[str, str] = {}
 
 
-def save_articles(target_dir: str, cn_md: str, en_md: str, summary: str = "") -> str:
-    """校验目录并写入 cn.md / en.md。"""
+def save_article(target_dir: str, cn_md: str, summary: str = "") -> str:
+    """校验目录并写入 cn.md（目录名必须为纯中文）。"""
     rel = sanitize_rel_dir(target_dir)
     out_dir = (BLOG_ROOT / rel).resolve()
     if BLOG_ROOT != out_dir and BLOG_ROOT not in out_dir.parents:
@@ -361,29 +374,26 @@ def save_articles(target_dir: str, cn_md: str, en_md: str, summary: str = "") ->
 
     out_dir.mkdir(parents=True, exist_ok=True)
     cn_path = out_dir / "cn.md"
-    en_path = out_dir / "en.md"
     cn_path.write_text(cn_md.strip() + "\n", encoding="utf-8")
-    en_path.write_text(en_md.strip() + "\n", encoding="utf-8")
 
-    branch = sanitize_branch(f"{BLOG_DIR_NAME}/{rel}")
-    title = f"docs({BLOG_DIR_NAME}): add {rel} (cn/en)"
+    branch = sanitize_branch(rel)
+    title = f"docs({BLOG_DIR_NAME}): add {rel}"
     RESULT.update(
         {
             "target_dir": rel,
             "cn_path": f"{BLOG_DIR_NAME}/{rel}/cn.md",
-            "en_path": f"{BLOG_DIR_NAME}/{rel}/en.md",
             "full_dir": f"{BLOG_DIR_NAME}/{rel}",
             "branch": branch,
             "title": title,
             "summary": summary or ISSUE_TITLE,
         }
     )
-    log(f"已写入 {RESULT['cn_path']} 与 {RESULT['en_path']}")
+    log(f"已写入 {RESULT['cn_path']}")
     return json.dumps(
         {
             "ok": True,
             "dir": rel,
-            "files": [RESULT["cn_path"], RESULT["en_path"]],
+            "files": [RESULT["cn_path"]],
             "branch": branch,
             "note": "文章已落盘，请直接用一句话总结本次写入的内容，不要再次调用工具。",
         },
@@ -423,27 +433,26 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_blog_tree",
-            "description": "重新查看博客目录结构，确认分类是否已存在。",
+            "description": "重新查看博客目录结构，确认中文分类是否已存在。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "save_articles",
-            "description": "把最终的中英文文章写入磁盘。必须在检索核实之后调用，且只调用一次。",
+            "name": "save_article",
+            "description": "把最终的简体中文文章写入磁盘。必须在检索核实之后调用，且只调用一次。目录名必须是中文。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "target_dir": {
                         "type": "string",
-                        "description": "相对博客根目录的多层目录，如 ai/rag/intro-to-rag；最后一段即以主题命名的文件夹",
+                        "description": "相对博客根目录的多层中文目录，如 后端/数据库/索引选型；最后一段即以主题命名的文件夹",
                     },
-                    "cn_md": {"type": "string", "description": "简体中文版完整 Markdown 正文（含 YAML front matter）"},
-                    "en_md": {"type": "string", "description": "English version full Markdown (with YAML front matter)"},
+                    "cn_md": {"type": "string", "description": "简体中文完整 Markdown 正文（含 YAML front matter）"},
                     "summary": {"type": "string", "description": "一句话总结本次新增内容（会写入 PR 正文）"},
                 },
-                "required": ["target_dir", "cn_md", "en_md"],
+                "required": ["target_dir", "cn_md"],
             },
         },
     },
@@ -453,8 +462,8 @@ TOOL_FUNCS = {
     "search_web": lambda **kw: search_web(kw.get("query", ""), kw.get("max_results", 6)),
     "fetch_url": lambda **kw: fetch_url(kw.get("url", "")),
     "list_blog_tree": lambda **kw: blog_tree(),
-    "save_articles": lambda **kw: save_articles(
-        kw.get("target_dir", ""), kw.get("cn_md", ""), kw.get("en_md", ""), kw.get("summary", "")
+    "save_article": lambda **kw: save_article(
+        kw.get("target_dir", ""), kw.get("cn_md", ""), kw.get("summary", "")
     ),
 }
 
@@ -462,33 +471,36 @@ TOOL_FUNCS = {
 # ----------------------------------------------------------------------------
 # Prompt
 # ----------------------------------------------------------------------------
-SYSTEM_PROMPT = f"""你是一个"双语技术博客写作 Agent"，运行在 GitHub Actions 中。
-你会收到一个 GitHub Issue（用户提出的写作/解答需求），必须产出一篇中英双语文章落盘到仓库。
+SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 GitHub Actions 中。
+你会收到一个 GitHub Issue（用户提出的写作/解答需求），必须产出一篇简体中文文章落盘到仓库。
 
 硬性要求：
-1. 博客根目录：{BLOG_DIR_NAME}/（仓库根目录下）。先在心中检查 list_blog_tree 给出的既有分类：
+1. 博客根目录：{BLOG_DIR_NAME}/（仓库根目录下）。先检查 list_blog_tree 给出的既有分类：
    - 有合适分类就复用它（可以再往下加一层子目录）；
-   - 没有合适分类就自行新建，允许多层子目录（如 backend/database/postgres-index-basics）。
-2. 新建的**最后一层目录名必须体现 issue 主题**，优先用小写英文 kebab-case（如 intro-to-rag、k8s-hpa-tuning），
-   中文主题也可用中文短词组；不要使用日期、issue 编号或泛化词（misc、other、new-post）。
-3. 在该目录下创建两个文件：cn.md（简体中文）、en.md（English）。两篇内容等价，不是机械直译。
-4. 事实性内容（版本号、参数、基准数据、时间、人名、API 形态、价格）必须先用 search_web 检索，
+   - 没有合适分类就自行新建，允许多层子目录。
+2. **所有目录名（含分类层和最后一层主题目录）必须使用简体中文**，例如：
+   后端/数据库/索引选型、人工智能/检索增强生成、前端/构建工具。
+   严禁出现任何英文单词、拼音、kebab-case、日期、issue 编号或泛化词（杂项、其他、新文章）。
+   程序会过滤掉非汉字字符，纯英文目录会被直接拒绝并报错，届时请立刻改用中文重新调用。
+3. 最后一层目录名必须体现 issue 主题，用简短中文词组（4~12 字为宜）。
+4. 在该目录下只创建一个文件：cn.md（简体中文）。
+5. 事实性内容（版本号、参数、基准数据、时间、人名、API 形态、价格）必须先用 search_web 检索，
    再用 fetch_url 打开 1~3 个权威来源核实。搜不到就明确写"截至 {TODAY} 未找到权威来源"，禁止编造。
-5. 结构建议：背景 → 核心概念/原理 → 实操步骤或示例（带代码/命令块）→ 常见坑 → 小结 → 参考链接。
+6. 结构建议：背景 → 核心概念/原理 → 实操步骤或示例（带代码/命令块）→ 常见坑 → 小结 → 参考链接。
    正文 800~1500 字，Markdown 规范，代码块标注语言。
-6. 两个文件开头都要写 YAML front matter：
+7. 文件开头必须写 YAML front matter：
    ---
-   title: <该语言标题>
+   title: <中文标题>
    date: {TODAY}
-   lang: zh-CN | en
-   tags: [tag1, tag2]
+   lang: zh-CN
+   tags: [标签1, 标签2]
    summary: <一句话摘要>
    source_issue: {ISSUE_URL or ('#' + ISSUE_NUMBER if ISSUE_NUMBER else '')}
    ---
-7. 参考链接放在正文末尾的"参考 / References"小节，只写你实际抓取或确认过的 URL。
-8. 不要写与主题无关的内容，不要在正文里提及 issue、机器人或本流程。
+8. 参考链接放在正文末尾的"参考"小节，只写你实际抓取或确认过的 URL。
+9. 不要写与主题无关的内容，不要在正文里提及 issue、机器人或本流程。
 
-最后必须调用 save_articles 落盘，成功后用一句话总结即可。"""
+最后必须调用 save_article 落盘，成功后用一句话总结即可。"""
 
 
 def build_user_prompt() -> str:
@@ -497,15 +509,58 @@ def build_user_prompt() -> str:
         f"Issue 链接: {ISSUE_URL}\n"
         f"提出者: {ISSUE_AUTHOR}\n"
         f"日期: {TODAY}\n\n"
-        f"当前博客目录结构（根目录 {BLOG_DIR_NAME}/）：\n{blog_tree()}\n\n"
+        f"当前博客目录结构（根目录 {BLOG_DIR_NAME}/，全部为中文）：\n{blog_tree()}\n\n"
         f"Issue 正文（需求）如下：\n-----\n{ISSUE_BODY}\n-----\n\n"
-        "请先检索核实，再调用 save_articles 写入 cn.md 与 en.md。"
+        "请先检索核实，再调用 save_article 写入 cn.md（目录名必须是中文）。"
     )
 
 
 # ----------------------------------------------------------------------------
-# 模型循环
+# 模型调用（429 指数退避；其他非成功状态码直接 fail）
 # ----------------------------------------------------------------------------
+def _status_code_of(exc: BaseException) -> int | None:
+    resp = getattr(exc, "response", None)
+    code = getattr(resp, "status_code", None)
+    if code:
+        return int(code)
+    code = getattr(exc, "status_code", None) or getattr(exc, "http_status", None)
+    return int(code) if code else None
+
+
+def _retry_after_of(exc: BaseException) -> float:
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None) or {}
+    try:
+        return float(headers.get("Retry-After") or headers.get("retry-after") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def chat_with_backoff(client, **kwargs):
+    """调用 Chat Completions：
+    - HTTP 429：指数退避等待 2/4/8/16/32s，最多 5 次；仍失败则 fail
+    - 其他非 2xx：立即 fail
+    """
+    delay = BASE_BACKOFF
+    for attempt in range(MAX_429_RETRIES + 1):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            status = _status_code_of(exc)
+            if status == 429 or exc.__class__.__name__ == "RateLimitError":
+                if attempt >= MAX_429_RETRIES:
+                    fail(f"模型返回 429（限流），已退避重试 {MAX_429_RETRIES} 次仍失败：{exc}")
+                wait = max(delay, _retry_after_of(exc))
+                log(f"429 限流，第 {attempt + 1}/{MAX_429_RETRIES} 次退避，等待 {wait:.0f}s 后重试")
+                time.sleep(wait)
+                delay *= 2
+                continue
+            if status is not None:
+                fail(f"模型调用失败（HTTP {status}）：{exc}")
+            fail(f"模型调用失败：{type(exc).__name__}: {exc}")
+    fail("模型调用失败：未知错误")
+
+
 def run_agent() -> None:
     if OpenAI is None:
         fail("未安装 openai 依赖，请先 pip install -r .github/ci/requirements.txt")
@@ -514,14 +569,15 @@ def run_agent() -> None:
     if not ISSUE_BODY.strip():
         fail("Issue 正文为空，无法生成文章")
 
-    client = OpenAI(base_url=BASE_URL, api_key=API_KEY, timeout=180, max_retries=2)
+    client = OpenAI(base_url=BASE_URL, api_key=API_KEY, timeout=180, max_retries=0)
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": build_user_prompt()},
     ]
 
     for round_no in range(1, MAX_ROUNDS + 1):
-        resp = client.chat.completions.create(
+        resp = chat_with_backoff(
+            client,
             model=MODEL,
             messages=messages,
             tools=TOOLS,
@@ -558,7 +614,7 @@ def run_agent() -> None:
             messages.append(
                 {
                     "role": "user",
-                    "content": "请继续：若已完成检索，立即调用 save_articles 写入 cn.md 与 en.md。",
+                    "content": "请继续：若已完成检索，立即调用 save_article 写入 cn.md（目录名必须是中文）。",
                 }
             )
             continue
@@ -575,7 +631,7 @@ def run_agent() -> None:
             except Exception as exc:  # noqa: BLE001
                 out = f"工具执行失败：{type(exc).__name__}: {exc}"
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(out)[:20000]})
-            if name == "save_articles" and RESULT:
+            if name == "save_article" and RESULT:
                 return
 
     if not RESULT:
@@ -600,9 +656,9 @@ def write_summary() -> None:
         return
     with open(path, "a", encoding="utf-8") as f:
         f.write(
-            "### 🤖 Issue → 双语博客\n\n"
+            "### 🤖 Issue → 中文博客\n\n"
             f"- 目录：`{RESULT['full_dir']}`\n"
-            f"- 文件：`{RESULT['cn_path']}`、`{RESULT['en_path']}`\n"
+            f"- 文件：`{RESULT['cn_path']}`\n"
             f"- 分支：`{RESULT['branch']}`\n"
             f"- 摘要：{RESULT['summary']}\n"
         )
