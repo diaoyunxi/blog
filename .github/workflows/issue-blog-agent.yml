@@ -118,22 +118,49 @@ jobs:
           python .github/ci/main.py 2>&1 | tee "$RUNNER_TEMP/agent.log"
           exit "${PIPESTATUS[0]}"
 
+      - name: 上传 Agent 执行轨迹
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-trace-${{ github.run_id }}
+          path: ${{ runner.temp }}/agent-trace.md
+          if-no-files-found: warn
+
       - name: Agent 失败详情回帖
         if: steps.agent.outcome == 'failure'
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
+          TRACE_TAIL: ${{ steps.agent.outputs.trace_tail }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          ERR=$(grep -a '::error::' "$RUNNER_TEMP/agent.log" | tail -n 3 || true)
-          [ -z "$ERR" ] && ERR=$(tail -n 15 "$RUNNER_TEMP/agent.log")
-          gh issue comment "$ISSUE_NUMBER" --body "❌ Agent 执行失败，错误如下：
-
-          \`\`\`
-          ${ERR}
-          \`\`\`
-
-          [完整日志](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})" || true
+          ERR=$(grep -a '::error::' "$RUNNER_TEMP/agent.log" | sed 's/^::error:://' | tail -n 3 || true)
+          [ -z "$ERR" ] && ERR="（无 ::error:: 输出）"
+          printf '%s' "${TRACE_TAIL:-（无轨迹）}" > "$RUNNER_TEMP/trace-tail.txt"
+          {
+            echo "❌ Agent 执行失败："
+            echo
+            echo '```'
+            echo "$ERR"
+            echo '```'
+            echo
+            echo "<details><summary>完整执行轨迹（尾部）</summary>"
+            echo
+            echo '```text'
+            tail -n 60 "$RUNNER_TEMP/trace-tail.txt"
+            echo '```'
+            echo "</details>"
+            echo
+            echo "完整轨迹见 artifact \`agent-trace-${GITHUB_RUN_ID}\`：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/comment.md" || true
+          {
+            echo "### ❌ Agent 失败详情"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/trace-tail.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
       - name: 建分支、提交、推送

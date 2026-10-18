@@ -65,8 +65,52 @@ def log(msg: str) -> None:
     print(f"[agent] {msg}", flush=True)
 
 
+# ----------------------------------------------------------------------------
+# 执行轨迹（完整记录每一轮模型输出 / 工具调用 / 工具返回，失败也保留）
+# ----------------------------------------------------------------------------
+TRACE: list[str] = []
+TRACE_DIR = pathlib.Path(os.getenv("RUNNER_TEMP") or os.getenv("TMPDIR") or "/tmp")
+TRACE_FILE = TRACE_DIR / "agent-trace.md"
+
+
+def trace(msg: str) -> None:
+    """写入轨迹并同步打印到 stdout（Actions 日志里也能逐条看到）。"""
+    TRACE.append(msg)
+    print(f"[trace] {msg}", flush=True)
+
+
+def cut(text: object, limit: int = 800) -> str:
+    s = str(text)
+    return s if len(s) <= limit else s[:limit] + f" …(已截断，共 {len(s)} 字符)"
+
+
+def dump_trace() -> str:
+    """把轨迹写入 $RUNNER_TEMP/agent-trace.md、$GITHUB_STEP_SUMMARY，并返回全文。"""
+    body = "\n".join(TRACE) if TRACE else "（无轨迹）"
+    try:
+        TRACE_FILE.write_text(body, encoding="utf-8")
+        log(f"轨迹已写入 {TRACE_FILE}")
+    except OSError as exc:
+        log(f"轨迹写文件失败：{exc}")
+
+    summary_path = os.getenv("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        try:
+            with open(summary_path, "a", encoding="utf-8") as f:
+                f.write("\n<details><summary>🤖 Agent 完整执行轨迹</summary>\n\n```text\n")
+                f.write(body.replace("```", "'''"))
+                f.write("\n```\n\n</details>\n")
+        except OSError as exc:
+            log(f"轨迹写 summary 失败：{exc}")
+    return body
+
+
 def fail(msg: str, code: int = 1) -> "NoReturn":  # type: ignore[valid-type]
     print(f"::error::[agent] {msg}", file=sys.stderr, flush=True)
+    trace(f"❌ 失败：{msg}")
+    body = dump_trace()
+    emit("trace_tail", body[-6000:])
+    emit("error_message", msg)
     sys.exit(code)
 
 
@@ -552,6 +596,7 @@ def chat_with_backoff(client, **kwargs):
                     fail(f"模型返回 429（限流），已退避重试 {MAX_429_RETRIES} 次仍失败：{exc}")
                 wait = max(delay, _retry_after_of(exc))
                 log(f"429 限流，第 {attempt + 1}/{MAX_429_RETRIES} 次退避，等待 {wait:.0f}s 后重试")
+                trace(f"⏳ 模型返回 429，第 {attempt + 1}/{MAX_429_RETRIES} 次退避，等待 {wait:.0f}s")
                 time.sleep(wait)
                 delay *= 2
                 continue
@@ -574,8 +619,14 @@ def run_agent() -> None:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": build_user_prompt()},
     ]
+    trace(f"模型 {MODEL} @ {BASE_URL}；最大轮数 {MAX_ROUNDS}")
+    trace(f"博客根目录 {BLOG_DIR_NAME}/，目录树：\n{cut(blog_tree(), 1200)}")
+    trace(f"Issue #{ISSUE_NUMBER}《{ISSUE_TITLE}》正文长度 {len(ISSUE_BODY)} 字符")
+
+    no_tool_rounds = 0
 
     for round_no in range(1, MAX_ROUNDS + 1):
+        trace(f"──────── 第 {round_no} 轮 ────────")
         resp = chat_with_backoff(
             client,
             model=MODEL,
@@ -586,6 +637,11 @@ def run_agent() -> None:
         )
         msg = resp.choices[0].message
         tool_calls = getattr(msg, "tool_calls", None) or []
+        if msg.content:
+            trace(f"模型输出文本：{cut(msg.content, 600)}")
+        if tool_calls:
+            names = ", ".join(tc.function.name for tc in tool_calls)
+            trace(f"模型请求调用工具：{names}")
         messages.append(
             {
                 "role": "assistant",
@@ -610,6 +666,14 @@ def run_agent() -> None:
         if not tool_calls:
             if RESULT:
                 return
+            no_tool_rounds += 1
+            trace(f"⚠️ 第 {round_no} 轮未返回任何工具调用（连续第 {no_tool_rounds} 次）")
+            if no_tool_rounds >= 3:
+                fail(
+                    f"模型连续 {no_tool_rounds} 轮未返回 function calling 结果。"
+                    f"当前模型 {MODEL} 很可能不支持 tools/function calling，"
+                    "请更换为支持 function calling 的模型（或改用支持工具调用的模型名）。"
+                )
             log(f"第 {round_no} 轮未调用工具，继续等待落盘")
             messages.append(
                 {
@@ -619,23 +683,31 @@ def run_agent() -> None:
             )
             continue
 
+        no_tool_rounds = 0
         for tc in tool_calls:
             name = tc.function.name
             try:
                 args = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
                 args = {}
-            log(f"第 {round_no} 轮调用 {name}")
+            trace(f"调用 {name}，参数：{cut(args, 600)}")
             try:
                 out = TOOL_FUNCS[name](**args)
             except Exception as exc:  # noqa: BLE001
                 out = f"工具执行失败：{type(exc).__name__}: {exc}"
+                trace(f"❌ {name} 抛出异常：{type(exc).__name__}: {exc}")
+            else:
+                trace(f"✅ {name} 返回：{cut(out, 1200)}")
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(out)[:20000]})
             if name == "save_article" and RESULT:
+                trace(f"第 {round_no} 轮落盘成功，结束循环")
                 return
 
     if not RESULT:
-        fail(f"达到最大轮数 {MAX_ROUNDS} 仍未生成文章")
+        fail(
+            f"达到最大轮数 {MAX_ROUNDS} 仍未生成文章。"
+            "常见原因：目录名反复被中文校验拒绝、搜索持续失败导致模型不敢落盘，或模型不遵循工具调用。"
+        )
 
 
 # ----------------------------------------------------------------------------
@@ -668,9 +740,12 @@ def main() -> None:
     run_agent()
     if not RESULT:
         fail("未产出任何文件")
+    trace(f"🎉 完成：{RESULT['full_dir']} / 分支 {RESULT['branch']}")
+    dump_trace()
     for k, v in RESULT.items():
         emit(k, v)
     emit("created", "true")
+    emit("trace_tail", ("\n".join(TRACE))[-6000:])
     write_summary()
     log(json.dumps(RESULT, ensure_ascii=False))
 
