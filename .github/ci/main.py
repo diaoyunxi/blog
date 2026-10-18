@@ -23,6 +23,7 @@ GitHub Issue -> 中文博客 Agent
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import pathlib
@@ -57,6 +58,11 @@ MAX_ROUNDS = int(os.getenv("MAX_ROUNDS") or "16")
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE") or "0.2")
 MAX_429_RETRIES = int(os.getenv("MAX_429_RETRIES") or "5")   # 2/4/8/16/32s
 BASE_BACKOFF = float(os.getenv("BASE_BACKOFF") or "2")       # 首次等待秒数
+# 检索预算：避免模型一直在检索、始终不落盘
+MAX_SEARCH_CALLS = int(os.getenv("MAX_SEARCH_CALLS") or "6")
+MAX_FETCH_CALLS = int(os.getenv("MAX_FETCH_CALLS") or "5")
+# 从第几轮开始强制只调用 save_article（兜底，保证一定会落盘）
+FORCE_SAVE_ROUND = int(os.getenv("FORCE_SAVE_ROUND") or max(4, MAX_ROUNDS - 4))
 
 UA = "Mozilla/5.0 (compatible; BlogIssueBot/1.0; +https://github.com)"
 
@@ -320,6 +326,23 @@ def _duckduckgo(query: str, n: int) -> list[dict]:
     return items
 
 
+def _bing_unwrap(href: str) -> str:
+    """Bing 结果返回的是 bing.com/ck/a?...&u=a1aHR0c... 跳转链，还原成真实 URL。"""
+    if "bing.com/ck/a" not in href:
+        return href
+    m = re.search(r"[?&]u=([^&]+)", href)
+    if not m:
+        return href
+    raw = requests.utils.unquote(m.group(1))
+    if raw.startswith("a1"):          # a1 前缀 + base64
+        raw = raw[2:]
+    padded = raw + "=" * (-len(raw) % 4)
+    try:
+        return base64.b64decode(padded).decode("utf-8", errors="ignore") or href
+    except Exception:  # noqa: BLE001
+        return href
+
+
 def _bing(query: str, n: int) -> list[dict]:
     r = requests.get(
         "https://www.bing.com/search",
@@ -338,7 +361,7 @@ def _bing(query: str, n: int) -> list[dict]:
         items.append(
             {
                 "title": a.get_text(" ", strip=True),
-                "url": a["href"],
+                "url": _bing_unwrap(a["href"]),
                 "snippet": sn.get_text(" ", strip=True) if sn else "",
             }
         )
@@ -530,6 +553,9 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
 4. 在该目录下只创建一个文件：cn.md（简体中文）。
 5. 事实性内容（版本号、参数、基准数据、时间、人名、API 形态、价格）必须先用 search_web 检索，
    再用 fetch_url 打开 1~3 个权威来源核实。搜不到就明确写"截至 {TODAY} 未找到权威来源"，禁止编造。
+   **检索预算（硬性）**：search_web 最多 {MAX_SEARCH_CALLS} 次、fetch_url 最多 {MAX_FETCH_CALLS} 次。
+   拿到 2~3 条可靠证据就够，立刻动笔。禁止为了穷尽资料反复检索——
+   检索配额用尽或轮数过半时，系统会强制你落盘，此时必须基于已有信息直接写出完整文章。
 6. 结构建议：背景 → 核心概念/原理 → 实操步骤或示例（带代码/命令块）→ 常见坑 → 小结 → 参考链接。
    正文 800~1500 字，Markdown 规范，代码块标注语言。
 7. 文件开头必须写 YAML front matter：
@@ -619,22 +645,61 @@ def run_agent() -> None:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": build_user_prompt()},
     ]
-    trace(f"模型 {MODEL} @ {BASE_URL}；最大轮数 {MAX_ROUNDS}")
+    trace(
+        f"模型 {MODEL} @ {BASE_URL}；最大轮数 {MAX_ROUNDS}，"
+        f"检索预算 search≤{MAX_SEARCH_CALLS} / fetch≤{MAX_FETCH_CALLS}，第 {FORCE_SAVE_ROUND} 轮起强制落盘"
+    )
     trace(f"博客根目录 {BLOG_DIR_NAME}/，目录树：\n{cut(blog_tree(), 1200)}")
     trace(f"Issue #{ISSUE_NUMBER}《{ISSUE_TITLE}》正文长度 {len(ISSUE_BODY)} 字符")
 
     no_tool_rounds = 0
+    n_search = 0
+    n_fetch = 0
 
     for round_no in range(1, MAX_ROUNDS + 1):
         trace(f"──────── 第 {round_no} 轮 ────────")
-        resp = chat_with_backoff(
-            client,
-            model=MODEL,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="auto",
-            temperature=TEMPERATURE,
-        )
+
+        # 预算提示：把剩余配额明确告诉模型
+        if round_no == max(2, FORCE_SAVE_ROUND - 3):
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"提示：你已用掉 search_web {n_search}/{MAX_SEARCH_CALLS} 次、"
+                        f"fetch_url {n_fetch}/{MAX_FETCH_CALLS} 次。请停止检索，"
+                        "基于已有信息直接调用 save_article 写出完整文章。"
+                    ),
+                }
+            )
+            trace("已注入『停止检索、立即落盘』提示")
+
+        # 兜底：接近轮数上限时强制只调用 save_article
+        force_save = round_no >= FORCE_SAVE_ROUND
+        if force_save:
+            trace(f"第 {round_no} 轮进入强制落盘模式（tool_choice=save_article）")
+
+        def _call(tc_value):
+            return chat_with_backoff(
+                client,
+                model=MODEL,
+                messages=messages,
+                tools=TOOLS,
+                tool_choice=tc_value,
+                temperature=TEMPERATURE,
+            )
+
+        try:
+            resp = _call(
+                {"type": "function", "function": {"name": "save_article"}} if force_save else "auto"
+            )
+        except SystemExit:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if not force_save:
+                raise
+            trace(f"强制落盘模式调用失败（{type(exc).__name__}），退回 auto 模式")
+            resp = _call("auto")
+
         msg = resp.choices[0].message
         tool_calls = getattr(msg, "tool_calls", None) or []
         if msg.content:
@@ -690,14 +755,27 @@ def run_agent() -> None:
                 args = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
                 args = {}
-            trace(f"调用 {name}，参数：{cut(args, 600)}")
-            try:
-                out = TOOL_FUNCS[name](**args)
-            except Exception as exc:  # noqa: BLE001
-                out = f"工具执行失败：{type(exc).__name__}: {exc}"
-                trace(f"❌ {name} 抛出异常：{type(exc).__name__}: {exc}")
+
+            # 检索预算拦截：配额用尽时直接返回提示，不再真的发请求
+            if name == "search_web" and n_search >= MAX_SEARCH_CALLS:
+                out = f"检索预算已用尽（{MAX_SEARCH_CALLS}/{MAX_SEARCH_CALLS}）。请立即用已有信息调用 save_article 写文章。"
+                trace(f"⛔ search_web 预算用尽，拒绝调用")
+            elif name == "fetch_url" and n_fetch >= MAX_FETCH_CALLS:
+                out = f"抓取预算已用尽（{MAX_FETCH_CALLS}/{MAX_FETCH_CALLS}）。请立即用已有信息调用 save_article 写文章。"
+                trace(f"⛔ fetch_url 预算用尽，拒绝调用")
             else:
-                trace(f"✅ {name} 返回：{cut(out, 1200)}")
+                if name == "search_web":
+                    n_search += 1
+                elif name == "fetch_url":
+                    n_fetch += 1
+                trace(f"调用 {name}（累计 search {n_search}/{MAX_SEARCH_CALLS}、fetch {n_fetch}/{MAX_FETCH_CALLS}），参数：{cut(args, 600)}")
+                try:
+                    out = TOOL_FUNCS[name](**args)
+                except Exception as exc:  # noqa: BLE001
+                    out = f"工具执行失败：{type(exc).__name__}: {exc}"
+                    trace(f"❌ {name} 抛出异常：{type(exc).__name__}: {exc}")
+                else:
+                    trace(f"✅ {name} 返回：{cut(out, 1200)}")
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(out)[:20000]})
             if name == "save_article" and RESULT:
                 trace(f"第 {round_no} 轮落盘成功，结束循环")
