@@ -219,9 +219,20 @@ jobs:
 
           > 本 PR 由 AI Agent 生成，请人工校对事实与链接后再合并。"
 
-          PR_URL=$(gh pr view "$BRANCH" --json url --jq .url 2>/dev/null || true)
-          if [ -z "$PR_URL" ]; then
-            PR_URL=$(gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$BODY")
+          echo "分支：$BRANCH → $BASE_BRANCH"
+          set +e
+          PR_URL=$(gh pr view "$BRANCH" --json url --jq .url 2>"$RUNNER_TEMP/pr-view.err")
+          RC=$?
+          set -e
+          if [ $RC -ne 0 ]; then
+            echo "尚无 PR，准备创建…"
+            PR_URL=$(gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$BODY" 2>&1 | tee "$RUNNER_TEMP/pr-create.log" | grep -E '^https://' | tail -1)
+            if [ -z "$PR_URL" ]; then
+              echo "::error::创建 PR 失败，gh 输出如下："
+              cat "$RUNNER_TEMP/pr-create.log"
+              echo "::error::请确认仓库 Settings → Actions → General 已勾选 'Allow GitHub Actions to create and approve pull requests'"
+              exit 1
+            fi
           fi
           PR_NUMBER=$(gh pr view "$BRANCH" --json number --jq .number)
           echo "pr_url=$PR_URL"     >> "$GITHUB_OUTPUT"
@@ -244,9 +255,9 @@ jobs:
           内容由 AI 联网检索生成，合并前请人工校对。"
 
       - name: 失败时回帖
-        if: failure() && github.event_name == 'issues' && steps.agent.outcome != 'failure'
+        if: failure() && steps.agent.outcome != 'failure'
         env:
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment "$ISSUE_NUMBER" --body "⚠️ 自动生成文章失败，请查看 Actions 日志：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
+          gh issue comment "$ISSUE_NUMBER" --body "⚠️ 自动生成文章失败（非 Agent 环节），请查看 Actions 日志：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true

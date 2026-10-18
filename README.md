@@ -67,3 +67,17 @@ Actions → **Issue → Blog (CN) Agent** → Run workflow → 填 `issue_number
 - Issue 正文会原样进入模型上下文，属于**提示词注入**高风险输入。默认只对仓库成员/协作者的 Issue 自动执行；若要放开给所有人，把 workflow 里的 `if:` 条件改为按 label 触发更稳妥。
 - `permissions` 已按最小权限给到 `contents/pull-requests/issues: write`。
 - 生成内容一律走 PR，不直接推主分支，保留人工 review 环节。
+
+## 仓库设置要求（否则 PR 会创建失败）
+
+Settings → Actions → General → Workflow permissions 需要：
+
+- 勾选 **Allow GitHub Actions to create and approve pull requests**
+
+否则 `GITHUB_TOKEN` 会被拒绝创建 PR（分支能推送成功，但 `gh pr create` 报 not permitted）。
+可用一条命令确认：
+
+```bash
+gh api /repos/<owner>/<repo>/actions/permissions/workflow --jq '.'
+# 期望：can_approve_pull_request_reviews = true
+```
