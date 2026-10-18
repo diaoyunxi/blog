@@ -119,9 +119,9 @@ jobs:
           exit "${PIPESTATUS[0]}"
 
       - name: Agent 失败详情回帖
-        if: steps.agent.outcome == 'failure' && github.event_name == 'issues'
+        if: steps.agent.outcome == 'failure'
         env:
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
