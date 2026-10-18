@@ -1,0 +1,203 @@
+name: Issue → Blog (CN/EN) Agent
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "要处理的 Issue 编号（手动调试用）"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: issue-blog-agent-${{ github.event.issue.number || github.event.inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  write-blog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 安全：默认只对仓库成员/协作者创建的 issue 自动跑，避免外部输入触发 AI 写文件
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+
+    env:
+      BLOG_DIR: ${{ vars.BLOG_DIR || 'blog' }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_MODEL: ${{ vars.LLM_MODEL || 'gpt-4o-mini' }}
+      LLM_TEMPERATURE: ${{ vars.LLM_TEMPERATURE || '0.2' }}
+      SEARCH_PROVIDER: ${{ vars.SEARCH_PROVIDER || 'auto' }}
+      SEARCH_API_KEY: ${{ secrets.SEARCH_API_KEY }}
+      SEARCH_REGION: ${{ vars.SEARCH_REGION || 'cn-zh' }}
+      SEARCH_LANG: ${{ vars.SEARCH_LANG || 'zh-cn' }}
+      MAX_ROUNDS: ${{ vars.MAX_ROUNDS || '16' }}
+      BASE_BRANCH: ${{ github.event.repository.default_branch }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r .github/ci/requirements.txt
+
+      - name: 收集 Issue 内容（走 env/文件，避免正文里的特殊字符破坏 shell）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_CREATED_AT: ${{ github.event.issue.created_at }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/issue"
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # 手动调试：用 gh 读取 issue 内容
+            gh issue view "$ISSUE_NUMBER" --json title,body,url,author,createdAt \
+              > "$RUNNER_TEMP/issue/raw.json"
+            python - <<'PY'
+          import json, os, pathlib
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"]) / "issue"
+          d = json.loads((tmp / "raw.json").read_text(encoding="utf-8"))
+          (tmp / "title.md").write_text(d.get("title", ""), encoding="utf-8")
+          (tmp / "body.md").write_text(d.get("body") or "", encoding="utf-8")
+          author = (d.get("author") or {}).get("login", "")
+          env_lines = [
+              f"ISSUE_URL={d.get('url','')}",
+              f"ISSUE_AUTHOR={author}",
+              f"ISSUE_CREATED_AT={d.get('createdAt','')}",
+          ]
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write("\n".join(env_lines) + "\n")
+          PY
+          else
+            printf '%s' "$ISSUE_TITLE" > "$RUNNER_TEMP/issue/title.md"
+            printf '%s' "$ISSUE_BODY"  > "$RUNNER_TEMP/issue/body.md"
+            {
+              echo "ISSUE_URL=$ISSUE_URL"
+              echo "ISSUE_AUTHOR=$ISSUE_AUTHOR"
+              echo "ISSUE_CREATED_AT=$ISSUE_CREATED_AT"
+            } >> "$GITHUB_ENV"
+          fi
+
+          if [ ! -s "$RUNNER_TEMP/issue/body.md" ]; then
+            echo "::error::issue 正文为空，跳过"
+            exit 1
+          fi
+          {
+            echo "ISSUE_TITLE_FILE=$RUNNER_TEMP/issue/title.md"
+            echo "ISSUE_BODY_FILE=$RUNNER_TEMP/issue/body.md"
+          } >> "$GITHUB_ENV"
+
+      - name: 运行 Agent 生成 cn.md / en.md
+        id: agent
+        run: python .github/ci/main.py
+
+      - name: 建分支、提交、推送
+        if: steps.agent.outputs.created == 'true'
+        env:
+          BRANCH: ${{ steps.agent.outputs.branch }}
+          TITLE: ${{ steps.agent.outputs.title }}
+          CN_PATH: ${{ steps.agent.outputs.cn_path }}
+          EN_PATH: ${{ steps.agent.outputs.en_path }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          SUMMARY: ${{ steps.agent.outputs.summary }}
+          FULL_DIR: ${{ steps.agent.outputs.full_dir }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --heads origin "$BRANCH" | grep -q .; then
+            git fetch origin "$BRANCH"
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
+
+          git add "$CN_PATH" "$EN_PATH"
+          git commit -m "$TITLE" -m "由 Issue #$ISSUE_NUMBER 自动生成双语文章
+
+          目录: $FULL_DIR
+          Issue: $ISSUE_URL
+          摘要: $SUMMARY"
+          git push origin "$BRANCH"
+
+      - name: 创建 PR
+        if: steps.agent.outputs.created == 'true'
+        id: pr
+        env:
+          BRANCH: ${{ steps.agent.outputs.branch }}
+          TITLE: ${{ steps.agent.outputs.title }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          SUMMARY: ${{ steps.agent.outputs.summary }}
+          FULL_DIR: ${{ steps.agent.outputs.full_dir }}
+          CN_PATH: ${{ steps.agent.outputs.cn_path }}
+          EN_PATH: ${{ steps.agent.outputs.en_path }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          BODY="Closes #$ISSUE_NUMBER
+
+          由 Issue #$ISSUE_NUMBER 自动生成的双语文章。
+
+          - 目录：\`$FULL_DIR\`
+          - 文件：\`$CN_PATH\`、\`$EN_PATH\`
+          - 摘要：$SUMMARY
+
+          > 本 PR 由 AI Agent 生成，请人工校对事实与链接后再合并。"
+
+          PR_URL=$(gh pr view "$BRANCH" --json url --jq .url 2>/dev/null || true)
+          if [ -z "$PR_URL" ]; then
+            PR_URL=$(gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$BODY")
+          fi
+          PR_NUMBER=$(gh pr view "$BRANCH" --json number --jq .number)
+          echo "pr_url=$PR_URL"     >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: 在原 Issue 评论 PR 编号
+        if: steps.pr.outputs.pr_number != ''
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
+          FULL_DIR: ${{ steps.agent.outputs.full_dir }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh issue comment "$ISSUE_NUMBER" --body "🤖 已生成双语文章并提交 PR：#${PR_NUMBER}
+          - 目录：\`${FULL_DIR}\`
+          - 链接：${PR_URL}
+
+          内容由 AI 联网检索生成，合并前请人工校对。"
+
+      - name: 失败时回帖
+        if: failure() && github.event_name == 'issues'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "⚠️ 自动生成文章失败，请查看 Actions 日志：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
