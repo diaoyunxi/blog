@@ -18,9 +18,9 @@ blog/                      # 博客根目录（可在 vars.BLOG_DIR 改），内
 
 | 名称 | 位置 | 必填 | 说明 |
 |---|---|---|---|
-| `LLM_BASE_URL` | Secrets | ✅ | OpenAI 兼容地址，如 `https://apihub.agnes-ai.com/v1` |
+| `LLM_BASE_URL` | Secrets | ✅ | OpenAI 兼容地址，当前 `https://apihub.agnes-ai.com/v1` |
 | `LLM_API_KEY` | Secrets | ✅ | 模型 Key |
-| `LLM_MODEL` | Variables | 推荐 | 默认 `gpt-4o-mini`，必须支持 function calling |
+| `LLM_MODEL` | Variables | 推荐 | 当前 `agnes-3.0-flash`，必须支持 function calling |
 | `MAX_429_RETRIES` | Variables | 可选 | 429 最大退避次数，默认 5（等待 2/4/8/16/32s） |
 | `BASE_BACKOFF` | Variables | 可选 | 首次退避秒数，默认 2 |
 | `SEARCH_API_KEY` | Secrets | 可选 | 配了走 Tavily，不配回退 DuckDuckGo / Bing |
