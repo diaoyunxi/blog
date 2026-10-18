@@ -254,6 +254,24 @@ jobs:
 
           内容由 AI 联网检索生成，合并前请人工校对。"
 
+      - name: 回帖执行轨迹（调试用，需 vars.TRACE_COMMENT=true）
+        if: steps.pr.outputs.pr_number != '' && vars.TRACE_COMMENT == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
+          TRACE_TAIL: ${{ steps.agent.outputs.trace_tail }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${TRACE_TAIL:-（无轨迹）}" > "$RUNNER_TEMP/trace-tail.txt"
+          {
+            echo "### 🧾 Agent 执行轨迹（调试）"
+            echo
+            echo '```text'
+            tail -n 80 "$RUNNER_TEMP/trace-tail.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/comment.md" || true
+
       - name: 失败时回帖
         if: failure() && steps.agent.outcome != 'failure'
         env:
