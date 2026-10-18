@@ -112,7 +112,29 @@ jobs:
 
       - name: 运行 Agent 生成 cn.md
         id: agent
-        run: python .github/ci/main.py
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python .github/ci/main.py 2>&1 | tee "$RUNNER_TEMP/agent.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Agent 失败详情回帖
+        if: steps.agent.outcome == 'failure' && github.event_name == 'issues'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ERR=$(grep -a '::error::' "$RUNNER_TEMP/agent.log" | tail -n 3 || true)
+          [ -z "$ERR" ] && ERR=$(tail -n 15 "$RUNNER_TEMP/agent.log")
+          gh issue comment "$ISSUE_NUMBER" --body "❌ Agent 执行失败，错误如下：
+
+          \`\`\`
+          ${ERR}
+          \`\`\`
+
+          [完整日志](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})" || true
+          exit 1
 
       - name: 建分支、提交、推送
         if: steps.agent.outputs.created == 'true'
@@ -195,7 +217,7 @@ jobs:
           内容由 AI 联网检索生成，合并前请人工校对。"
 
       - name: 失败时回帖
-        if: failure() && github.event_name == 'issues'
+        if: failure() && github.event_name == 'issues' && steps.agent.outcome != 'failure'
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
