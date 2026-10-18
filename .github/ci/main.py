@@ -546,7 +546,8 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
    - 有合适分类就复用它（可以再往下加一层子目录）；
    - 没有合适分类就自行新建，允许多层子目录。
 2. **所有目录名（含分类层和最后一层主题目录）必须使用简体中文**，例如：
-   后端/数据库/索引选型、人工智能/检索增强生成、前端/构建工具。
+   后端/数据库/索引选型、前端/构建工具/打包体积优化、数据库/查询优化。
+   （注意：这些只是格式示例，**文章主题永远以下面的 Issue 为准**，不要照抄示例里的主题。）
    严禁出现任何英文单词、拼音、kebab-case、日期、issue 编号或泛化词（杂项、其他、新文章）。
    程序会过滤掉非汉字字符，纯英文目录会被直接拒绝并报错，届时请立刻改用中文重新调用。
 3. 最后一层目录名必须体现 issue 主题，用简短中文词组（4~12 字为宜）。
@@ -667,16 +668,29 @@ def run_agent() -> None:
                     "content": (
                         f"提示：你已用掉 search_web {n_search}/{MAX_SEARCH_CALLS} 次、"
                         f"fetch_url {n_fetch}/{MAX_FETCH_CALLS} 次。请停止检索，"
-                        "基于已有信息直接调用 save_article 写出完整文章。"
+                        f"基于已有信息直接调用 save_article 写出完整文章。\n"
+                        f"文章主题严格固定为本次 Issue：#{ISSUE_NUMBER}《{ISSUE_TITLE}》，"
+                        f"不要写其他主题。\nIssue 原文：\n{ISSUE_BODY[:600]}"
                     ),
                 }
             )
-            trace("已注入『停止检索、立即落盘』提示")
+            trace("已注入『停止检索、立即落盘 + 重申主题』提示")
 
         # 兜底：接近轮数上限时强制只调用 save_article
         force_save = round_no >= FORCE_SAVE_ROUND
         if force_save:
             trace(f"第 {round_no} 轮进入强制落盘模式（tool_choice=save_article）")
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"本轮必须调用 save_article 落盘，禁止再检索。\n"
+                        f"主题严格为 Issue #{ISSUE_NUMBER}《{ISSUE_TITLE}》。\n"
+                        f"目录最后一段用中文概括该主题，不要使用任何示例里的目录名。\n"
+                        f"Issue 原文：\n{ISSUE_BODY[:800]}"
+                    ),
+                }
+            )
 
         def _call(tc_value):
             return chat_with_backoff(
