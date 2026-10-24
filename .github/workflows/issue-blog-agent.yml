@@ -21,10 +21,9 @@ jobs:
   write-blog:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # 安全：默认只对仓库成员/协作者创建的 issue 自动跑，避免外部输入触发 AI 写文件
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+    # 任何人新建的 Issue 都会触发（已移除作者身份限制）。
+    # 提示词注入风险已由 main.py 的落盘约束承担：
+    #   目录名强制中文 + 只写 cn.md + 改动白名单仅 .md，正文内容无法影响仓库代码。
 
     env:
       BLOG_DIR: ${{ vars.BLOG_DIR || 'blog' }}
