@@ -85,9 +85,11 @@ def owner_of_number(num: str, depth: int = 0) -> str:
     返回「编号 N 对应的真实发起人」。
 
     issue 与 PR 共用编号，/issues/{N} 对两者都返回 user.login。
-    但 agent 建的 PR 作者是 github-actions[bot] —— 这时要顺着 PR 正文里的
-    `Closes #M` 回溯到最初那条 Issue，才能拿到真正的人类发起人，
-    否则「自己生成的文章谁都改不了」。
+    历史文件可能来自「agent 建的 PR」（PR #4 及更早的旧流程，作者是
+    github-actions[bot]）—— 这时要顺着 PR 正文的 `Closes #M` 回溯到最初那条
+    Issue 的人类发起人，否则这些旧文章谁都改不了。
+    现行流程（agent 直推主分支）不会产生这种 PR，但旧文件仍在仓库里，
+    所以这段回溯必须保留。
     """
     if depth > 3:
         return ""

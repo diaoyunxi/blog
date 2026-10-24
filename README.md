@@ -70,8 +70,10 @@ blog/                      # 博客根目录（可在 vars.BLOG_DIR 改），内
 
 1. 读文件 front matter 的 `source_issue: .../issues/N` → 取该 Issue 发起人（最直接）
 2. 否则从「首次加入该文件的那次提交」的信息里提取 `Issue #N` / `Closes #N` / `(#N)`
-3. 若 N 是 **agent 建的 PR**（作者是 `github-actions[bot]`），会顺着 PR 正文的 `Closes #M`
-   **回溯到最初那条 Issue 的人类发起人** —— 否则「自己生成的文章谁都改不了」
+3. 若 N 是**旧流程里 agent 建的 PR**（作者是 `github-actions[bot]`，如 PR #4），会顺着 PR
+   正文的 `Closes #M` **回溯到最初那条 Issue 的人类发起人**。
+   现行 agent 已改为直推主分支、不再建 PR，所以这只对**历史遗留文件**生效
+   （目前 `blog/人工智能/生成式模型/文生图扩散原理/cn.md` 正是这种情况）
 4. 都拿不到 → 退回提交作者本人；机器人提交且无来源 → 判为「未知」→ 拒绝
 
 ### Agent 侧配套
