@@ -286,7 +286,7 @@ jobs:
           exit $rc
 
       - name: 归属校验不通过时留言
-        if: steps.own.outcome == 'failure'
+        if: always() && steps.own.outcome == 'failure'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPORT: ${{ steps.own.outputs.report }}
