@@ -275,10 +275,15 @@ jobs:
             echo "::error::未取到 PR 创建者，无法校验归属"
             exit 1
           fi
+          set +e
           python .github/ci/check_changes.py check \
             --mode api --actor "$ACTOR" --prefix blog \
             --files-json "$RUNNER_TEMP/pr-changes.json"
-          echo "rc=$?"
+          rc=$?
+          set -e
+          # 注意：不要用 echo "$?" 收尾，那会把失败码掩盖成 0
+          echo "归属校验退出码=$rc"
+          exit $rc
 
       - name: 归属校验不通过时留言
         if: steps.own.outcome == 'failure'
