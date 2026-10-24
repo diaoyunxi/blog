@@ -2,9 +2,28 @@ name: Auto-merge PR (md-only)
 
 # PR 打开（或重开）时自动合并 —— 前提是该 PR 的 diff 只包含 .md 文件改动。
 # 任何其他后缀的改动都会拒绝合并，并在 PR 下留言说明。
+#
+# ┌──────────────────────────────────────────────────────────────────────┐
+# │ ⚠️ 为什么用 pull_request_target                                        │
+# │                                                                       │
+# │ 本仓库的 Issue→Blog Agent 已改为直推主分支，不再产生 PR。               │
+# │ 因此会走到这里的 PR 全部来自外部投稿者，也就是 fork PR。                │
+# │ 而 fork PR 在 pull_request 事件下 GITHUB_TOKEN 被强制降为只读，         │
+# │ gh pr merge 会 403 —— 必须用 pull_request_target 才有写权限。           │
+# │                                                                       │
+# │ 安全前提（改动前务必确认仍然成立）：                                   │
+# │   1. 本 workflow 从不 checkout PR 的 head 代码（无 actions/checkout）   │
+# │   2. 只通过 REST API 读取「文件名」做后缀判断，不打开文件、不读内容     │
+# │   3. 不构建、不安装依赖、不执行 PR 里的任何脚本或测试                   │
+# │   4. 因此 PR 内容无法影响本 workflow 的执行路径                         │
+# │                                                                       │
+# │ ❌ 以后不要在本文件里加入：actions/checkout（拉 PR head）、              │
+# │    npm install / pip install（执行 PR 里的钩子）、直接 source 或运行     │
+# │    PR 中的脚本文件。加了就等于把写权限 token 交给不可信代码。            │
+# └──────────────────────────────────────────────────────────────────────┘
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened]
   workflow_dispatch:
     inputs:
@@ -37,10 +56,8 @@ jobs:
       ABORT_ON_CONFLICT: ${{ vars.ABORT_ON_CONFLICT || 'true' }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      # 注意：这里刻意不做 checkout。本 workflow 只用 API 读文件名，
+      # 不需要也不应该把（可能来自 fork 的）PR 代码拉到 runner 上。
 
       # ------------------------------------------------------------------
       # 1. 读取 PR 元信息：必须是 OPEN、非草稿
@@ -57,7 +74,8 @@ jobs:
           fi
           echo "处理 PR #$PR_NUMBER（$REPO）"
 
-          gh pr view "$PR_NUMBER" --repo "$REPO" --json number,title,state,isDraft,baseRefName,headRefName,author,url \
+          gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json number,title,state,isDraft,baseRefName,headRefName,isCrossRepository,author,url \
             > "$RUNNER_TEMP/pr.json"
 
           python3 - <<'PY'
@@ -76,6 +94,7 @@ jobs:
           emit("head", d.get("headRefName", ""))
           emit("title", d.get("title", ""))
           emit("author", (d.get("author") or {}).get("login", ""))
+          emit("fork", str(d.get("isCrossRepository", False)).lower())
 
           # 同时落盘供本步骤 shell 直接读取（GITHUB_OUTPUT 用的是 heredoc 写法，不便 grep）
           tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
@@ -175,6 +194,8 @@ jobs:
               echo "${{ steps.check.outputs.non_md_list }}"
               echo
               echo "请把上述文件从 PR 中移除（或改为通过其他流程提交）后重新打开此 PR。"
+              echo
+              echo "<!-- fork=${{ steps.meta.outputs.fork }} -->"
             } > "$RUNNER_TEMP/comment.md"
             BODY=""
           fi
@@ -288,6 +309,7 @@ jobs:
             echo
             echo "- 合并方式：\`${{ env.MERGE_METHOD }}\`"
             echo "- 目标分支：\`${{ steps.meta.outputs.base }}\`"
+            echo "- 来源：${{ steps.meta.outputs.fork == 'true' && '外部 fork 投稿' || '同仓库分支' }}"
             echo "- 改动文件："
             echo "${{ steps.check.outputs.md_list }}"
           } > "$RUNNER_TEMP/comment.md"
