@@ -181,35 +181,59 @@ jobs:
         if: steps.check.outputs.ok == 'false' || steps.check.outputs.ok == 'empty'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 通过 env 传值给 python：避免文件名里的反引号被 shell 当成命令替换吞掉
+          OK_FLAG: ${{ steps.check.outputs.ok }}
+          TOTAL: ${{ steps.check.outputs.total }}
+          NON_MD_COUNT: ${{ steps.check.outputs.non_md_count }}
+          NON_MD_LIST: ${{ steps.check.outputs.non_md_list }}
+          IS_FORK: ${{ steps.meta.outputs.fork }}
+          BASE_BRANCH: ${{ steps.meta.outputs.base }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.check.outputs.ok }}" = "empty" ]; then
-            BODY="⛔ **未自动合并**：该 PR 没有任何文件改动。"
-          else
-            {
-              echo "⛔ **未自动合并**：该 PR 的改动中包含非 \`.md\` 文件（共 ${{ steps.check.outputs.non_md_count }} 个）。"
-              echo
-              echo "本仓库的自动合并规则是 **diff 只允许 .md 文件**："
-              echo
-              echo "${{ steps.check.outputs.non_md_list }}"
-              echo
-              echo "请把上述文件从 PR 中移除（或改为通过其他流程提交）后重新打开此 PR。"
-              echo
-              echo "<!-- fork=${{ steps.meta.outputs.fork }} -->"
-            } > "$RUNNER_TEMP/comment.md"
-            BODY=""
-          fi
-          if [ -z "$BODY" ]; then
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md"
-          else
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY"
-          fi
-          {
-            echo "### ⛔ 未自动合并 PR #$PR_NUMBER"
-            echo
-            echo "- 改动文件数：${{ steps.check.outputs.total || 0 }}"
-            echo "- 非 .md 文件数：${{ steps.check.outputs.non_md_count || 0 }}"
-          } >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          import os, pathlib
+
+          ok       = os.environ.get("OK_FLAG", "")
+          total    = os.environ.get("TOTAL", "0")
+          n_count  = os.environ.get("NON_MD_COUNT", "0")
+          n_list   = os.environ.get("NON_MD_LIST", "（无）")
+          is_fork  = os.environ.get("IS_FORK", "")
+          base     = os.environ.get("BASE_BRANCH", "")
+          tmp      = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          if ok == "empty":
+              body = "⛔ **未自动合并**：该 PR 没有任何文件改动。"
+          else:
+              src = "外部 fork 投稿" if is_fork == "true" else "同仓库分支"
+              body = "\n".join([
+                  f"⛔ **未自动合并**：该 PR 的改动中包含非 `.md` 文件（共 {n_count} 个）。",
+                  "",
+                  "本仓库的自动合并规则是 **diff 只允许 .md 文件**：",
+                  "",
+                  n_list,
+                  "",
+                  "请把上述文件从 PR 中移除（或改为通过其他流程提交）后重新打开此 PR。",
+                  "",
+                  f"<!-- source={src} base={base} -->",
+              ])
+
+          (tmp / "comment.md").write_text(body, encoding="utf-8")
+          print("留言内容：")
+          print(body)
+
+          summary = "\n".join([
+              "### ⛔ 未自动合并 PR",
+              "",
+              f"- 改动文件数：{total}",
+              f"- 非 .md 文件数：{n_count}",
+          ])
+          p = os.environ.get("GITHUB_STEP_SUMMARY")
+          if p:
+              with open(p, "a", encoding="utf-8") as f:
+                  f.write(summary + "\n")
+          PY
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md"
 
       # ------------------------------------------------------------------
       # 4. 合规：等待 GitHub 计算合并状态，然后合并
@@ -284,7 +308,7 @@ jobs:
                 cat "$RUNNER_TEMP/merge2.log"
                 echo '```'
                 echo
-                echo "常见原因：分支保护规则要求 review 或必须通过某些检查、仓库未开启 auto-merge，或 PR 来自 fork（token 只读）。"
+                echo "常见原因：分支保护规则要求 review 或必须通过某些检查、仓库未开启 auto-merge。"
               } > "$RUNNER_TEMP/comment.md"
               gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md" || true
               echo "::error::PR #$PR_NUMBER 自动合并失败"
@@ -302,25 +326,55 @@ jobs:
         if: steps.merge.outputs.merged == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 同样走 env + python，避免文件名中的反引号被 shell 命令替换吞掉
+          TOTAL: ${{ steps.check.outputs.total }}
+          MD_LIST: ${{ steps.check.outputs.md_list }}
+          IS_FORK: ${{ steps.meta.outputs.fork }}
+          BASE_BRANCH: ${{ steps.meta.outputs.base }}
+          PR_TITLE: ${{ steps.meta.outputs.title }}
         run: |
           set -euo pipefail
-          {
-            echo "✅ **已自动合并**（改动仅含 \`.md\` 文件，共 ${{ steps.check.outputs.total }} 个）"
-            echo
-            echo "- 合并方式：\`${{ env.MERGE_METHOD }}\`"
-            echo "- 目标分支：\`${{ steps.meta.outputs.base }}\`"
-            echo "- 来源：${{ steps.meta.outputs.fork == 'true' && '外部 fork 投稿' || '同仓库分支' }}"
-            echo "- 改动文件："
-            echo "${{ steps.check.outputs.md_list }}"
-          } > "$RUNNER_TEMP/comment.md"
+          python3 - <<'PY'
+          import os, pathlib
+
+          total = os.environ.get("TOTAL", "0")
+          mds   = os.environ.get("MD_LIST", "（无）")
+          fork  = os.environ.get("IS_FORK", "")
+          base  = os.environ.get("BASE_BRANCH", "")
+          title = os.environ.get("PR_TITLE", "")
+          # job 级 env 会自动注入，直接读即可
+          method = os.environ.get("MERGE_METHOD", "squash")
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          src = "外部 fork 投稿" if fork == "true" else "同仓库分支"
+
+          body = "\n".join([
+              f"✅ **已自动合并**（改动仅含 `.md` 文件，共 {total} 个）",
+              "",
+              f"- 合并方式：`{method}`",
+              f"- 目标分支：`{base}`",
+              f"- 来源：{src}",
+              "- 改动文件：",
+              mds,
+          ])
+          (tmp / "comment.md").write_text(body, encoding="utf-8")
+          print("留言内容：")
+          print(body)
+
+          p = os.environ.get("GITHUB_STEP_SUMMARY")
+          if p:
+              with open(p, "a", encoding="utf-8") as f:
+                  f.write("\n".join([
+                      "### ✅ 已自动合并 PR",
+                      "",
+                      f"- 标题：{title}",
+                      f"- 改动文件：{total} 个（全部 .md）",
+                      f"- 合并方式：`{method}` → `{base}`",
+                      f"- 来源：{src}",
+                  ]) + "\n")
+          PY
+
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md" || true
-          {
-            echo "### ✅ 已自动合并 PR #$PR_NUMBER"
-            echo
-            echo "- 标题：${{ steps.meta.outputs.title }}"
-            echo "- 改动文件：${{ steps.check.outputs.total }} 个（全部 .md）"
-            echo "- 合并方式：\`${{ env.MERGE_METHOD }}\` → \`${{ steps.meta.outputs.base }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 失败时留言
         if: failure() && steps.merge.outputs.conflict != 'true'
