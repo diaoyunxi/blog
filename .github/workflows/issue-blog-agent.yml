@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
   issues: write
 
 concurrency:
@@ -41,6 +40,8 @@ jobs:
       MAX_429_RETRIES: ${{ vars.MAX_429_RETRIES || '5' }}
       BASE_BACKOFF: ${{ vars.BASE_BACKOFF || '2' }}
       BASE_BRANCH: ${{ github.event.repository.default_branch }}
+      # Agent 最多尝试次数：diff 校验不过就丢弃重跑，用完仍未产出合法 .md 改动则失败
+      MAX_ATTEMPTS: ${{ vars.MAX_ATTEMPTS || '2' }}
 
     steps:
       - name: Checkout
@@ -110,13 +111,75 @@ jobs:
             echo "ISSUE_BODY_FILE=$RUNNER_TEMP/issue/body.md"
           } >> "$GITHUB_ENV"
 
-      - name: 运行 Agent 生成 cn.md
+      # ------------------------------------------------------------------
+      # 运行 Agent：最多 MAX_ATTEMPTS 次
+      # 每次先重置工作区到干净状态；产出后校验 diff —— 只允许 .md 后缀改动，
+      # 出现任何非 .md 改动就丢弃本次结果并整轮重跑；全部尝试用完才判失败。
+      # ------------------------------------------------------------------
+      - name: 运行 Agent 生成 cn.md（含 .md diff 校验与重跑）
         id: agent
         continue-on-error: true
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
-          set -o pipefail
-          python .github/ci/main.py 2>&1 | tee "$RUNNER_TEMP/agent.log"
-          exit "${PIPESTATUS[0]}"
+          set -uo pipefail
+
+          ATTEMPTS="${MAX_ATTEMPTS:-2}"
+          case "$ATTEMPTS" in ''|*[!0-9]*) ATTEMPTS=2 ;; esac
+          [ "$ATTEMPTS" -lt 1 ] && ATTEMPTS=1
+
+          reset_workspace() {
+            git reset --hard HEAD >/dev/null 2>&1 || true
+            git clean -fdq >/dev/null 2>&1 || true
+          }
+
+          ok=0
+          attempt=1
+          while [ "$attempt" -le "$ATTEMPTS" ]; do
+            echo "::group::Agent 第 $attempt/$ATTEMPTS 次尝试"
+            reset_workspace
+
+            python .github/ci/main.py 2>&1 | tee "$RUNNER_TEMP/agent.log"
+            rc=${PIPESTATUS[0]}
+            echo "::endgroup::"
+
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::第 $attempt 次 Agent 运行失败（exit $rc）"
+              attempt=$((attempt + 1))
+              continue
+            fi
+
+            git add -A
+            CHANGED="$(git -c core.quotepath=false diff --cached --name-only || true)"
+            if [ -z "$CHANGED" ]; then
+              echo "::warning::第 $attempt 次运行未产生任何文件改动"
+              git reset -q >/dev/null 2>&1 || true
+              attempt=$((attempt + 1))
+              continue
+            fi
+
+            NON_MD="$(printf '%s\n' "$CHANGED" | sed '/^[[:space:]]*$/d' | grep -vE '\.md$' || true)"
+            if [ -n "$NON_MD" ]; then
+              echo "::warning::第 $attempt 次的改动包含非 .md 文件，丢弃本次结果并重跑"
+              printf '%s\n' "$NON_MD" | sed 's/^/  ✗ /'
+              reset_workspace
+              attempt=$((attempt + 1))
+              continue
+            fi
+
+            echo "✅ 第 $attempt 次通过校验，改动文件均为 .md："
+            printf '%s\n' "$CHANGED" | sed 's/^/  ✓ /'
+            echo "attempts=$attempt" >> "$GITHUB_OUTPUT"
+            ok=1
+            break
+          done
+
+          if [ "$ok" != "1" ]; then
+            reset_workspace
+            echo "::error::Agent 连续 $ATTEMPTS 次未产出合法的 .md 改动，放弃本次生成"
+            exit 1
+          fi
 
       - name: 上传 Agent 执行轨迹
         if: always()
@@ -138,7 +201,7 @@ jobs:
           [ -z "$ERR" ] && ERR="（无 ::error:: 输出）"
           printf '%s' "${TRACE_TAIL:-（无轨迹）}" > "$RUNNER_TEMP/trace-tail.txt"
           {
-            echo "❌ Agent 执行失败："
+            echo "❌ Agent 执行失败（已重跑 ${MAX_ATTEMPTS} 次，仍未产出仅含 .md 的合法改动）："
             echo
             echo '```'
             echo "$ERR"
@@ -163,10 +226,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
-      - name: 建分支、提交、推送
-        if: steps.agent.outputs.created == 'true'
+      # ------------------------------------------------------------------
+      # 不开 PR：直接在主分支上提交并推送
+      # ------------------------------------------------------------------
+      - name: 提交并推送到主分支
+        if: steps.agent.outcome == 'success'
+        id: push
         env:
-          BRANCH: ${{ steps.agent.outputs.branch }}
           TITLE: ${{ steps.agent.outputs.title }}
           CN_PATH: ${{ steps.agent.outputs.cn_path }}
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
@@ -174,88 +240,80 @@ jobs:
           SUMMARY: ${{ steps.agent.outputs.summary }}
           FULL_DIR: ${{ steps.agent.outputs.full_dir }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if git ls-remote --heads origin "$BRANCH" | grep -q .; then
-            git fetch origin "$BRANCH"
-            git checkout -B "$BRANCH" "origin/$BRANCH"
-          else
-            git checkout -b "$BRANCH"
+          git add -A
+          CHANGED="$(git -c core.quotepath=false diff --cached --name-only || true)"
+          if [ -z "$CHANGED" ]; then
+            echo "::error::没有待提交的改动"
+            exit 1
           fi
 
-          git add "$CN_PATH"
+          # 提交前再做一次守卫：绝不允许非 .md 文件进入主分支
+          NON_MD="$(printf '%s\n' "$CHANGED" | sed '/^[[:space:]]*$/d' | grep -vE '\.md$' || true)"
+          if [ -n "$NON_MD" ]; then
+            echo "::error::提交前校验发现非 .md 改动，已终止推送："
+            printf '%s\n' "$NON_MD" | sed 's/^/  ✗ /'
+            git reset -q --hard HEAD
+            git clean -fdq
+            exit 1
+          fi
+
           git commit -m "$TITLE" -m "由 Issue #$ISSUE_NUMBER 自动生成中文文章
 
           目录: $FULL_DIR
           Issue: $ISSUE_URL
-          摘要: $SUMMARY"
-          git push origin "$BRANCH"
+          摘要: $SUMMARY
 
-      - name: 创建 PR
-        if: steps.agent.outputs.created == 'true'
-        id: pr
+          Closes #$ISSUE_NUMBER"
+
+          # 与主分支最新进度对齐后再推（并发场景下降低冲突概率）
+          git pull --rebase origin "$BASE_BRANCH"
+          git push origin "HEAD:$BASE_BRANCH"
+
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "commit_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$SHA" >> "$GITHUB_OUTPUT"
+          echo "files=$(printf '%s\n' "$CHANGED" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 🚀 已直接推送到 \`$BASE_BRANCH\`"
+            echo
+            echo "- 提交：[\`${SHA:0:7}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$SHA)"
+            echo "- 目录：\`$FULL_DIR\`"
+            echo "- 文件：\`$CN_PATH\`"
+            echo "- 摘要：$SUMMARY"
+            echo "- Agent 尝试次数：${{ steps.agent.outputs.attempts }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 在原 Issue 回帖结果
+        if: steps.push.outputs.commit_url != ''
         env:
-          BRANCH: ${{ steps.agent.outputs.branch }}
-          TITLE: ${{ steps.agent.outputs.title }}
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
-          ISSUE_URL: ${{ github.event.issue.html_url }}
-          SUMMARY: ${{ steps.agent.outputs.summary }}
+          COMMIT_URL: ${{ steps.push.outputs.commit_url }}
+          SHORT_SHA: ${{ steps.push.outputs.short_sha }}
           FULL_DIR: ${{ steps.agent.outputs.full_dir }}
           CN_PATH: ${{ steps.agent.outputs.cn_path }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          BODY="Closes #$ISSUE_NUMBER
-
-          由 Issue #$ISSUE_NUMBER 自动生成的中文文章。
-
-          - 目录：\`$FULL_DIR\`
-          - 文件：\`$CN_PATH\`
-          - 摘要：$SUMMARY
-
-          > 本 PR 由 AI Agent 生成，请人工校对事实与链接后再合并。"
-
-          echo "分支：$BRANCH → $BASE_BRANCH"
-          set +e
-          PR_URL=$(gh pr view "$BRANCH" --json url --jq .url 2>"$RUNNER_TEMP/pr-view.err")
-          RC=$?
-          set -e
-          if [ $RC -ne 0 ]; then
-            echo "尚无 PR，准备创建…"
-            PR_URL=$(gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$BODY" 2>&1 | tee "$RUNNER_TEMP/pr-create.log" | grep -E '^https://' | tail -1)
-            if [ -z "$PR_URL" ]; then
-              echo "::error::创建 PR 失败，gh 输出如下："
-              cat "$RUNNER_TEMP/pr-create.log"
-              echo "::error::请确认仓库 Settings → Actions → General 已勾选 'Allow GitHub Actions to create and approve pull requests'"
-              exit 1
-            fi
-          fi
-          PR_NUMBER=$(gh pr view "$BRANCH" --json number --jq .number)
-          echo "pr_url=$PR_URL"     >> "$GITHUB_OUTPUT"
-          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-
-      - name: 在原 Issue 评论 PR 编号
-        if: steps.pr.outputs.pr_number != ''
-        env:
-          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
-          PR_URL: ${{ steps.pr.outputs.pr_url }}
-          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
-          FULL_DIR: ${{ steps.agent.outputs.full_dir }}
+          ATTEMPTS: ${{ steps.agent.outputs.attempts }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh issue comment "$ISSUE_NUMBER" --body "🤖 已生成中文文章并提交 PR：#${PR_NUMBER}
-          - 目录：\`${FULL_DIR}\`
-          - 链接：${PR_URL}
+          gh issue comment "$ISSUE_NUMBER" --body "🤖 已生成中文文章并直接推送到 \`$BASE_BRANCH\`
 
-          内容由 AI 联网检索生成，合并前请人工校对。"
+          - 目录：\`${FULL_DIR}\`
+          - 文件：\`${CN_PATH}\`
+          - 提交：[\`${SHORT_SHA}\`](${COMMIT_URL})
+          - Agent 尝试次数：${ATTEMPTS:-1}
+
+          改动已校验仅包含 .md 文件，未创建 PR。内容由 AI 联网检索生成，请留意事实与链接的准确性。" || true
 
       - name: 回帖执行轨迹（调试用，需 vars.TRACE_COMMENT=true）
-        if: steps.pr.outputs.pr_number != '' && vars.TRACE_COMMENT == 'true'
+        if: steps.agent.outcome == 'success' && vars.TRACE_COMMENT == 'true'
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
           TRACE_TAIL: ${{ steps.agent.outputs.trace_tail }}
