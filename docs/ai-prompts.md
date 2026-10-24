@@ -60,12 +60,16 @@ Issue 链接: {URL}
 当前博客目录结构（根目录 blog/，全部为中文）：
 {list_blog_tree 输出，最大深度 3 层 / 400 条}
 
+本次提出者可改动（修改/删除）的文件：
+{由 workflow 预先算好的清单；为空时提示只能新增}
+
 Issue 正文（需求）如下：
 -----
 {Issue 正文原文}
 -----
 
-请先检索核实，再调用 save_article 写入 cn.md（目录名必须是中文）。
+请先判断操作类型（新增 / 修改 / 删除），需要核实时先检索，
+然后调用 save_article / edit_article / delete_article 落盘（目录名必须是中文，只能改 .md）。
 ```
 
 ⚠️ **Issue 正文是原样塞进来的**，没有任何过滤或转义——这是提示词注入的入口。
@@ -117,7 +121,12 @@ Issue 原文：
 | `search_web(query, max_results)` | 联网搜索，返回标题/URL/摘要 | ≤ 6 次 |
 | `fetch_url(url)` | 抓取网页正文，去标签截断到 12000 字符 | ≤ 5 次 |
 | `list_blog_tree()` | 查看博客目录结构 | 不限 |
-| `save_article(target_dir, cn_md, summary)` | 写入 `cn.md` | 只调 1 次 |
+| `save_article(target_dir, cn_md, summary)` | **新增**：在中文目录下创建 `cn.md` | 三选一，只调 1 次 |
+| `edit_article(target_file, cn_md, summary)` | **修改**：整篇覆盖已有 `.md` | 同上 |
+| `delete_article(target_file, summary)` | **删除**：删除已有 `.md` | 同上 |
+
+一次运行只做一种操作。写完后 CI 还会校验：
+改动必须全是 `.md`，且修改/删除的文件必须是**本次 Issue 提出者**创建的。
 
 配额用尽时工具返回"预算已用尽，请立即落盘"，不再真正发请求。
 

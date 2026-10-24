@@ -51,6 +51,36 @@ blog/                      # 博客根目录（可在 vars.BLOG_DIR 改），内
 > 中文路径下 `git diff --name-only` 默认会把路径转义成 `"blog/\346\265\213\350\257\225/cn.md"` 这种带引号的八进制形式，
 > 导致 `.md` 后缀判断失效。因此所有 diff 调用统一加 `-c core.quotepath=false`。
 
+## 改动归属校验（新增放行，改/删需本人创建）
+
+在「改动全是 .md」之后，两个 workflow 都会再跑一次归属校验（`.github/ci/check_changes.py`）：
+
+| 变更类型 | 规则 |
+|---|---|
+| 新增 `added` | 任何人都可以新增，直接放行 |
+| 修改 `modified` | 该文件必须是「本次操作者」创建的 |
+| 删除 `removed` | 同上 |
+| 重命名 `renamed` | 按**原路径**判定归属 |
+
+- **issue-blog-agent**：本次操作者 = 开 Issue 的人
+- **auto-merge-md-pr**：本次操作者 = 开 PR 的人
+- 校验不通过 → agent 丢弃重跑（用完 `MAX_ATTEMPTS` 才失败）；PR 则不合并并留言列出越权文件
+
+### 「文件创建者」怎么定
+
+1. 读文件 front matter 的 `source_issue: .../issues/N` → 取该 Issue 发起人（最直接）
+2. 否则从「首次加入该文件的那次提交」的信息里提取 `Issue #N` / `Closes #N` / `(#N)`
+3. 若 N 是 **agent 建的 PR**（作者是 `github-actions[bot]`），会顺着 PR 正文的 `Closes #M`
+   **回溯到最初那条 Issue 的人类发起人** —— 否则「自己生成的文章谁都改不了」
+4. 都拿不到 → 退回提交作者本人；机器人提交且无来源 → 判为「未知」→ 拒绝
+
+### Agent 侧配套
+
+- 运行前先算出「提出者可改动的文件清单」注入提示词，让 Agent 别去碰别人的文章
+- 提示词已支持**新增 / 修改 / 删除**三种意图，工具相应为
+  `save_article` / `edit_article` / `delete_article`
+- 强制落盘时按意图锁定对应工具（不再一律锁 `save_article`）
+
 ## 改动白名单（仅 .md）
 
 守卫有两道，防止 Agent 幻觉改到代码或 workflow 文件：

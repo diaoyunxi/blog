@@ -56,8 +56,14 @@ jobs:
       ABORT_ON_CONFLICT: ${{ vars.ABORT_ON_CONFLICT || 'true' }}
 
     steps:
-      # 注意：这里刻意不做 checkout。本 workflow 只用 API 读文件名，
-      # 不需要也不应该把（可能来自 fork 的）PR 代码拉到 runner 上。
+      # checkout 只拉「基分支」的代码（本仓库自己的可信代码，用于取 .github/ci/check_changes.py），
+      # 绝不拉 PR head —— 配合下面的归属校验，避免把写权限 token 暴露给不可信代码。
+      - name: Checkout（仅基分支，不拉 PR 代码）
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
 
       # ------------------------------------------------------------------
       # 1. 读取 PR 元信息：必须是 OPEN、非草稿
@@ -157,6 +163,23 @@ jobs:
           emit("non_md_list", "\n".join(f"- `{p}`" for p in non_md) or "（无）")
           emit("md_list", "\n".join(f"- `{p}`" for p in md_only) or "（无）")
 
+          # 供下一步归属校验使用：[{"path","status","previous_filename"}]
+          changes = []
+          for f in items:
+              if not isinstance(f, dict):
+                  continue
+              p = f.get("filename") or ""
+              if not p:
+                  continue
+              changes.append({
+                  "path": p,
+                  "status": f.get("status") or "",
+                  "previous_filename": f.get("previous_filename") or "",
+              })
+          (pathlib.Path(os.environ["RUNNER_TEMP"]) / "pr-changes.json").write_text(
+              json.dumps(changes, ensure_ascii=False), encoding="utf-8")
+          print(f"已写出 {len(changes)} 条改动记录供归属校验")
+
           print(f"改动文件 {len(paths)} 个，其中非 .md {len(non_md)} 个")
           for p in non_md:
               print(f"  ✗ {p}")
@@ -236,13 +259,66 @@ jobs:
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md"
 
       # ------------------------------------------------------------------
+      # 3.5 归属校验（在「全是 .md」之后）：
+      #     全部为新增文件 → 直接放行
+      #     含修改/删除/重命名 → 每个文件必须是「开 PR 的人」创建的
+      # ------------------------------------------------------------------
+      - name: 校验改动归属（新增放行，改/删需本人创建）
+        id: own
+        if: steps.check.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ steps.meta.outputs.author }}
+        run: |
+          set -uo pipefail
+          if [ -z "${ACTOR:-}" ]; then
+            echo "::error::未取到 PR 创建者，无法校验归属"
+            exit 1
+          fi
+          python .github/ci/check_changes.py check \
+            --mode api --actor "$ACTOR" --prefix blog \
+            --files-json "$RUNNER_TEMP/pr-changes.json"
+          echo "rc=$?"
+
+      - name: 归属校验不通过时留言
+        if: steps.own.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT: ${{ steps.own.outputs.report }}
+          VIOLATIONS: ${{ steps.own.outputs.violations }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib
+          report = os.environ.get("REPORT", "（无详细信息）")
+          viol = os.environ.get("VIOLATIONS", "（无）")
+          body = "\n".join([
+              "⛔ **未自动合并**：该 PR 包含修改或删除，且涉及不是你创建的文件。",
+              "",
+              "规则：新增文件任何人都可以提交；**修改或删除**已有文件，只能是该文件的创建者本人。",
+              "",
+              report,
+              "",
+              "**越权文件**：",
+              viol,
+          ])
+          (pathlib.Path(os.environ["RUNNER_TEMP"]) / "comment.md").write_text(body, encoding="utf-8")
+          print(body)
+          p = os.environ.get("GITHUB_STEP_SUMMARY")
+          if p:
+              with open(p, "a", encoding="utf-8") as f:
+                  f.write("### ⛔ 归属校验未通过\n\n" + report + "\n")
+          PY
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md" || true
+
+      # ------------------------------------------------------------------
       # 4. 合规：等待 GitHub 计算合并状态，然后合并
       #    --auto 优先（等 checks/review 满足后自动落），失败则回退直接合并
       #    注意：mergeable 是枚举 MERGEABLE/CONFLICTING/UNKNOWN，不是 true/false
       # ------------------------------------------------------------------
       - name: 自动合并 PR
         id: merge
-        if: steps.check.outputs.ok == 'true'
+        if: steps.check.outputs.ok == 'true' && steps.own.outputs.allowed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -377,7 +453,7 @@ jobs:
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md" || true
 
       - name: 失败时留言
-        if: failure() && steps.merge.outputs.conflict != 'true'
+        if: failure() && steps.merge.outputs.conflict != 'true' && steps.own.outcome != 'failure'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

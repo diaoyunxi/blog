@@ -431,41 +431,105 @@ def fetch_url(url: str, max_chars: int = 12000) -> str:
 # ----------------------------------------------------------------------------
 RESULT: dict[str, str] = {}
 
+# 文件名合法字符：中文 / 字母数字 / . _ -，且必须以 .md 结尾
+FILENAME_RE = re.compile(r"^[\w\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff.\-]+\.md$", re.IGNORECASE)
 
-def save_article(target_dir: str, cn_md: str, summary: str = "") -> str:
-    """校验目录并写入 cn.md（目录名必须为纯中文）。"""
-    rel = sanitize_rel_dir(target_dir)
-    out_dir = (BLOG_ROOT / rel).resolve()
-    if BLOG_ROOT != out_dir and BLOG_ROOT not in out_dir.parents:
-        raise ValueError(f"非法目录: {target_dir}")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    cn_path = out_dir / "cn.md"
-    cn_path.write_text(cn_md.strip() + "\n", encoding="utf-8")
+def sanitize_rel_file(raw: str) -> str:
+    """把模型给出的文件路径清洗为相对 blog 根的安全 .md 路径（目录段仍强制中文）。"""
+    raw = (raw or "").strip().replace("\\", "/").lstrip("/")
+    if raw.lower().startswith(BLOG_DIR_NAME.lower() + "/"):
+        raw = raw[len(BLOG_DIR_NAME) + 1:]
+    parts = [p for p in raw.split("/") if p]
+    if not parts:
+        raise ValueError("文件路径为空")
+    filename = parts[-1]
+    if not filename.lower().endswith(".md"):
+        raise ValueError(f"文件名 {filename!r} 必须以 .md 结尾（本仓库只允许改动 Markdown 文件）")
+    if not FILENAME_RE.match(filename):
+        raise ValueError(f"文件名 {filename!r} 含非法字符，只允许中文、字母、数字、点、下划线、连字符")
+    dirs = [sanitize_segment(p) for p in parts[:-1]]
+    return "/".join(dirs + [filename])
 
-    branch = sanitize_branch(rel)
-    title = f"docs({BLOG_DIR_NAME}): add {rel}"
+
+def _check_inside_blog(path: pathlib.Path, raw: str) -> pathlib.Path:
+    resolved = path.resolve()
+    if BLOG_ROOT != resolved and BLOG_ROOT not in resolved.parents:
+        raise ValueError(f"非法路径（越出 {BLOG_DIR_NAME}/）：{raw}")
+    return resolved
+
+
+def finish(rel_file: str, operation: str, summary: str = "") -> str:
+    """统一收尾：写入 RESULT，供 workflow 生成 commit / 回帖。"""
+    verb = {"add": "add", "update": "update", "remove": "remove"}.get(operation, "add")
+    rel_dir = rel_file.rsplit("/", 1)[0] if "/" in rel_file else ""
     RESULT.update(
         {
-            "target_dir": rel,
-            "cn_path": f"{BLOG_DIR_NAME}/{rel}/cn.md",
-            "full_dir": f"{BLOG_DIR_NAME}/{rel}",
-            "branch": branch,
-            "title": title,
+            "operation": verb,
+            "target_file": rel_file,
+            "target_dir": rel_dir,
+            "cn_path": f"{BLOG_DIR_NAME}/{rel_file}",
+            "full_dir": f"{BLOG_DIR_NAME}/{rel_dir}" if rel_dir else BLOG_DIR_NAME,
+            "branch": sanitize_branch(rel_dir or rel_file),
+            "title": f"docs({BLOG_DIR_NAME}): {verb} {rel_file}",
             "summary": summary or ISSUE_TITLE,
         }
     )
-    log(f"已写入 {RESULT['cn_path']}")
+    log(f"已完成 {verb}：{RESULT['cn_path']}")
     return json.dumps(
         {
             "ok": True,
-            "dir": rel,
-            "files": [RESULT["cn_path"]],
-            "branch": branch,
-            "note": "文章已落盘，请直接用一句话总结本次写入的内容，不要再次调用工具。",
+            "operation": verb,
+            "file": RESULT["cn_path"],
+            "note": "改动已落盘，请直接用一句话总结本次改动，不要再次调用工具。",
         },
         ensure_ascii=False,
     )
+
+
+def save_article(target_dir: str, cn_md: str, summary: str = "") -> str:
+    """【新增】在中文目录下写入 cn.md（目录名必须为纯中文）。"""
+    rel = sanitize_rel_dir(target_dir)
+    out_dir = _check_inside_blog(BLOG_ROOT / rel, target_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cn_path = out_dir / "cn.md"
+    existed = cn_path.exists()
+    cn_path.write_text(cn_md.strip() + "\n", encoding="utf-8")
+    return finish(f"{rel}/cn.md", "update" if existed else "add", summary)
+
+
+def edit_article(target_file: str, cn_md: str, summary: str = "") -> str:
+    """【修改】覆盖写入一篇已存在的 .md 文章（整篇替换）。"""
+    rel = sanitize_rel_file(target_file)
+    out = _check_inside_blog(BLOG_ROOT / rel, target_file)
+    existed = out.exists()
+    if not existed:
+        return json.dumps(
+            {"ok": False, "error": f"文件不存在，无法修改：{BLOG_DIR_NAME}/{rel}。"
+                                   f"若要新增文章请改用 save_article。"},
+            ensure_ascii=False,
+        )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(cn_md.strip() + "\n", encoding="utf-8")
+    return finish(rel, "update", summary)
+
+
+def delete_article(target_file: str, summary: str = "") -> str:
+    """【删除】删除一篇已存在的 .md 文章。"""
+    rel = sanitize_rel_file(target_file)
+    out = _check_inside_blog(BLOG_ROOT / rel, target_file)
+    if not out.exists():
+        return json.dumps(
+            {"ok": False, "error": f"文件不存在，无法删除：{BLOG_DIR_NAME}/{rel}"},
+            ensure_ascii=False,
+        )
+    out.unlink()
+    # 顺带清理因此变空的目录（不越过 blog 根）
+    d = out.parent
+    while d != BLOG_ROOT and d.is_dir() and not any(d.iterdir()):
+        d.rmdir()
+        d = d.parent
+    return finish(rel, "remove", summary)
 
 
 TOOLS = [
@@ -508,7 +572,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "save_article",
-            "description": "把最终的简体中文文章写入磁盘。必须在检索核实之后调用，且只调用一次。目录名必须是中文。",
+            "description": "【新增文章】在中文目录下创建 cn.md。目录名必须是中文。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -517,13 +581,52 @@ TOOLS = [
                         "description": "相对博客根目录的多层中文目录，如 后端/数据库/索引选型；最后一段即以主题命名的文件夹",
                     },
                     "cn_md": {"type": "string", "description": "简体中文完整 Markdown 正文（含 YAML front matter）"},
-                    "summary": {"type": "string", "description": "一句话总结本次新增内容（会写入 PR 正文）"},
+                    "summary": {"type": "string", "description": "一句话总结本次新增内容"},
                 },
                 "required": ["target_dir", "cn_md"],
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_article",
+            "description": "【修改文章】整篇覆盖写入一个已存在的 .md 文件。用于按 Issue 要求修订、补充、纠错已有文章。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_file": {
+                        "type": "string",
+                        "description": "相对博客根目录的 .md 文件路径，如 人工智能/生成式模型/文生图扩散原理/cn.md",
+                    },
+                    "cn_md": {"type": "string", "description": "替换后的简体中文完整 Markdown 正文（含 YAML front matter）"},
+                    "summary": {"type": "string", "description": "一句话总结本次修改"},
+                },
+                "required": ["target_file", "cn_md"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_article",
+            "description": "【删除文章】删除一个已存在的 .md 文件。仅当 Issue 明确要求删除时使用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_file": {
+                        "type": "string",
+                        "description": "相对博客根目录的 .md 文件路径，如 人工智能/生成式模型/文生图扩散原理/cn.md",
+                    },
+                    "summary": {"type": "string", "description": "一句话说明删除原因"},
+                },
+                "required": ["target_file"],
+            },
+        },
+    },
 ]
+
+WRITE_TOOLS = ("save_article", "edit_article", "delete_article")
 
 TOOL_FUNCS = {
     "search_web": lambda **kw: search_web(kw.get("query", ""), kw.get("max_results", 6)),
@@ -532,16 +635,46 @@ TOOL_FUNCS = {
     "save_article": lambda **kw: save_article(
         kw.get("target_dir", ""), kw.get("cn_md", ""), kw.get("summary", "")
     ),
+    "edit_article": lambda **kw: edit_article(
+        kw.get("target_file", ""), kw.get("cn_md", ""), kw.get("summary", "")
+    ),
+    "delete_article": lambda **kw: delete_article(
+        kw.get("target_file", ""), kw.get("summary", "")
+    ),
 }
+
+
+def guess_intent() -> str:
+    """根据 Issue 标题+正文粗判意图，决定强制落盘时锁定哪个工具。"""
+    text = f"{ISSUE_TITLE}\n{ISSUE_BODY}"
+    del_words = ("删除", "删掉", "删去", "移除", "去掉", "不要这篇", "下架")
+    edit_words = ("修改", "改一", "更新", "修订", "补充", "纠错", "改正", "重写", "改写", "调整")
+    if any(w in text for w in del_words):
+        return "delete_article"
+    if any(w in text for w in edit_words):
+        return "edit_article"
+    return "save_article"
 
 
 # ----------------------------------------------------------------------------
 # Prompt
 # ----------------------------------------------------------------------------
 SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 GitHub Actions 中。
-你会收到一个 GitHub Issue（用户提出的写作/解答需求），必须产出一篇简体中文文章落盘到仓库。
+你会收到一个 GitHub Issue（用户提出的写作/解答需求），据此对 {BLOG_DIR_NAME}/ 下的中文文章做
+**新增 / 修改 / 删除** 三种操作之一，并把改动落盘到仓库。
 
-硬性要求：
+## 第一步：判断操作类型
+
+先读 Issue 意图，三选一：
+
+- **新增**：Issue 要求写一篇新文章、介绍某个主题 → 用 `save_article`
+- **修改**：Issue 要求修订 / 补充 / 纠错 / 更新已有某篇文章 → 用 `edit_article`
+- **删除**：Issue 明确要求删掉某篇文章 → 用 `delete_article`
+
+不确定时默认按「新增」处理；只有 Issue 明确点名要改或要删某篇时才用后两者。
+
+## 硬性要求
+
 1. 博客根目录：{BLOG_DIR_NAME}/（仓库根目录下）。先检查 list_blog_tree 给出的既有分类：
    - 有合适分类就复用它（可以再往下加一层子目录）；
    - 没有合适分类就自行新建，允许多层子目录。
@@ -550,16 +683,21 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
    （注意：这些只是格式示例，**文章主题永远以下面的 Issue 为准**，不要照抄示例里的主题。）
    严禁出现任何英文单词、拼音、kebab-case、日期、issue 编号或泛化词（杂项、其他、新文章）。
    程序会过滤掉非汉字字符，纯英文目录会被直接拒绝并报错，届时请立刻改用中文重新调用。
-3. 最后一层目录名必须体现 issue 主题，用简短中文词组（4~12 字为宜）。
-4. 在该目录下只创建一个文件：cn.md（简体中文）。
-5. 事实性内容（版本号、参数、基准数据、时间、人名、API 形态、价格）必须先用 search_web 检索，
+3. 新增时最后一层目录名必须体现 issue 主题，用简短中文词组（4~12 字为宜），目录下文件名固定为 `cn.md`。
+4. 只允许改动 `.md` 文件；`edit_article` / `delete_article` 的 `target_file` 必须是以 `.md` 结尾的相对路径。
+5. **归属限制（重要）**：修改或删除已有文章时，该文件必须是**本次 Issue 提出者**创建的。
+   - 下面会给出「本次提出者可改动的文件清单」，只在这个清单里挑目标；
+   - 若目标文件不在清单中（是别人创建的），**不要调用改/删工具**，
+     改为回复一句说明："该文章由 <其他人> 创建，当前 Issue 提出者无权修改/删除。"，不落盘。
+   - 新增文章不受此限制，任何人都可以新增。
+6. 事实性内容（版本号、参数、基准数据、时间、人名、API 形态、价格）必须先用 search_web 检索，
    再用 fetch_url 打开 1~3 个权威来源核实。搜不到就明确写"截至 {TODAY} 未找到权威来源"，禁止编造。
    **检索预算（硬性）**：search_web 最多 {MAX_SEARCH_CALLS} 次、fetch_url 最多 {MAX_FETCH_CALLS} 次。
    拿到 2~3 条可靠证据就够，立刻动笔。禁止为了穷尽资料反复检索——
-   检索配额用尽或轮数过半时，系统会强制你落盘，此时必须基于已有信息直接写出完整文章。
-6. 结构建议：背景 → 核心概念/原理 → 实操步骤或示例（带代码/命令块）→ 常见坑 → 小结 → 参考链接。
+   检索配额用尽或轮数过半时，系统会强制你落盘，此时必须基于已有信息直接完成改动。
+7. 结构建议：背景 → 核心概念/原理 → 实操步骤或示例（带代码/命令块）→ 常见坑 → 小结 → 参考链接。
    正文 800~1500 字，Markdown 规范，代码块标注语言。
-7. 文件开头必须写 YAML front matter：
+8. 文件开头必须写 YAML front matter：
    ---
    title: <中文标题>
    date: {TODAY}
@@ -568,10 +706,27 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
    summary: <一句话摘要>
    source_issue: {ISSUE_URL or ('#' + ISSUE_NUMBER if ISSUE_NUMBER else '')}
    ---
-8. 参考链接放在正文末尾的"参考"小节，只写你实际抓取或确认过的 URL。
-9. 不要写与主题无关的内容，不要在正文里提及 issue、机器人或本流程。
+   修改已有文章时，保留原有的 `source_issue`，并把 `date` 更新为 {TODAY}。
+9. 参考链接放在正文末尾的"参考"小节，只写你实际抓取或确认过的 URL。
+10. 不要写与主题无关的内容，不要在正文里提及 issue、机器人或本流程。
+11. 一次运行只做一种操作、只调用一次写入类工具（save_article / edit_article / delete_article 三选一）。
 
-最后必须调用 save_article 落盘，成功后用一句话总结即可。"""
+最后必须落盘（或按第 5 条明确说明无权改动），成功后用一句话总结即可。"""
+
+
+def owned_files_hint() -> str:
+    """本次 Issue 提出者可改动的文件清单（由 workflow 预先算好写入 JSON）。"""
+    path = os.getenv("OWNED_MAP_FILE") or ""
+    if not path or not pathlib.Path(path).exists():
+        return "（本次提出者可改动清单未提供，请只做新增，不要修改或删除已有文章）"
+    try:
+        data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return "（清单解析失败，请只做新增，不要修改或删除已有文章）"
+    owned = data.get("owned") or []
+    if not owned:
+        return ("本次提出者目前**没有**任何自己创建的文章，因此只能新增，不能修改或删除已有文章。")
+    return "本次提出者可改动（修改/删除）的文件：\n" + "\n".join(f"- {p}" for p in owned)
 
 
 def build_user_prompt() -> str:
@@ -581,8 +736,10 @@ def build_user_prompt() -> str:
         f"提出者: {ISSUE_AUTHOR}\n"
         f"日期: {TODAY}\n\n"
         f"当前博客目录结构（根目录 {BLOG_DIR_NAME}/，全部为中文）：\n{blog_tree()}\n\n"
+        f"{owned_files_hint()}\n\n"
         f"Issue 正文（需求）如下：\n-----\n{ISSUE_BODY}\n-----\n\n"
-        "请先检索核实，再调用 save_article 写入 cn.md（目录名必须是中文）。"
+        "请先判断操作类型（新增 / 修改 / 删除），需要核实时先检索，"
+        "然后调用 save_article / edit_article / delete_article 落盘（目录名必须是中文，只能改 .md）。"
     )
 
 
@@ -657,6 +814,10 @@ def run_agent() -> None:
     n_search = 0
     n_fetch = 0
 
+    # 按 Issue 意图决定「强制落盘」时锁定哪个写入工具
+    force_tool = os.getenv("FORCE_TOOL") or guess_intent()
+    trace(f"意图判定：强制落盘时锁定 {force_tool}")
+
     for round_no in range(1, MAX_ROUNDS + 1):
         trace(f"──────── 第 {round_no} 轮 ────────")
 
@@ -668,7 +829,7 @@ def run_agent() -> None:
                     "content": (
                         f"提示：你已用掉 search_web {n_search}/{MAX_SEARCH_CALLS} 次、"
                         f"fetch_url {n_fetch}/{MAX_FETCH_CALLS} 次。请停止检索，"
-                        f"基于已有信息直接调用 save_article 写出完整文章。\n"
+                        f"基于已有信息直接调用 {force_tool} 完成改动。\n"
                         f"文章主题严格固定为本次 Issue：#{ISSUE_NUMBER}《{ISSUE_TITLE}》，"
                         f"不要写其他主题。\nIssue 原文：\n{ISSUE_BODY[:600]}"
                     ),
@@ -676,17 +837,18 @@ def run_agent() -> None:
             )
             trace("已注入『停止检索、立即落盘 + 重申主题』提示")
 
-        # 兜底：接近轮数上限时强制只调用 save_article
+        # 兜底：接近轮数上限时强制只调用写入类工具
         force_save = round_no >= FORCE_SAVE_ROUND
         if force_save:
-            trace(f"第 {round_no} 轮进入强制落盘模式（tool_choice=save_article）")
+            trace(f"第 {round_no} 轮进入强制落盘模式（tool_choice={force_tool}）")
             messages.append(
                 {
                     "role": "user",
                     "content": (
-                        f"本轮必须调用 save_article 落盘，禁止再检索。\n"
+                        f"本轮必须调用 {force_tool} 落盘，禁止再检索。\n"
                         f"主题严格为 Issue #{ISSUE_NUMBER}《{ISSUE_TITLE}》。\n"
-                        f"目录最后一段用中文概括该主题，不要使用任何示例里的目录名。\n"
+                        f"若是新增：目录最后一段用中文概括该主题，不要使用任何示例里的目录名。\n"
+                        f"若是修改或删除：target_file 必须是上文清单里本次提出者可改动的文件。\n"
                         f"Issue 原文：\n{ISSUE_BODY[:800]}"
                     ),
                 }
@@ -704,7 +866,7 @@ def run_agent() -> None:
 
         try:
             resp = _call(
-                {"type": "function", "function": {"name": "save_article"}} if force_save else "auto"
+                {"type": "function", "function": {"name": force_tool}} if force_save else "auto"
             )
         except SystemExit:
             raise
@@ -757,7 +919,11 @@ def run_agent() -> None:
             messages.append(
                 {
                     "role": "user",
-                    "content": "请继续：若已完成检索，立即调用 save_article 写入 cn.md（目录名必须是中文）。",
+                    "content": (
+                        f"请继续：若已完成检索，立即调用 {force_tool} 落盘"
+                        "（新增用 save_article，修改用 edit_article，删除用 delete_article；"
+                        "目标路径必须是中文目录下的 .md）。"
+                    ),
                 }
             )
             continue
@@ -791,7 +957,7 @@ def run_agent() -> None:
                 else:
                     trace(f"✅ {name} 返回：{cut(out, 1200)}")
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(out)[:20000]})
-            if name == "save_article" and RESULT:
+            if name in WRITE_TOOLS and RESULT:
                 trace(f"第 {round_no} 轮落盘成功，结束循环")
                 return
 
@@ -818,9 +984,11 @@ def write_summary() -> None:
     path = os.getenv("GITHUB_STEP_SUMMARY")
     if not path:
         return
+    op_cn = {"add": "新增", "update": "修改", "remove": "删除"}.get(RESULT.get("operation", ""), "改动")
     with open(path, "a", encoding="utf-8") as f:
         f.write(
             "### 🤖 Issue → 中文博客\n\n"
+            f"- 操作：{op_cn}\n"
             f"- 目录：`{RESULT['full_dir']}`\n"
             f"- 文件：`{RESULT['cn_path']}`\n"
             f"- 分支：`{RESULT['branch']}`\n"
@@ -831,8 +999,8 @@ def write_summary() -> None:
 def main() -> None:
     run_agent()
     if not RESULT:
-        fail("未产出任何文件")
-    trace(f"🎉 完成：{RESULT['full_dir']} / 分支 {RESULT['branch']}")
+        fail("未产出任何改动（可能是 Issue 要求修改/删除了别人创建的文章，已按归属规则拒绝）")
+    trace(f"🎉 完成：{RESULT.get('operation')} {RESULT['full_dir']} / 分支 {RESULT['branch']}")
     dump_trace()
     for k, v in RESULT.items():
         emit(k, v)

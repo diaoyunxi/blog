@@ -115,12 +115,42 @@ jobs:
       # 每次先重置工作区到干净状态；产出后校验 diff —— 只允许 .md 后缀改动，
       # 出现任何非 .md 改动就丢弃本次结果并整轮重跑；全部尝试用完才判失败。
       # ------------------------------------------------------------------
-      - name: 运行 Agent 生成 cn.md（含 .md diff 校验与重跑）
+      # ------------------------------------------------------------------
+      # 预先算出「本次 Issue 提出者可改动的文件清单」，交给 Agent 参考，
+      # 让它不要去改/删别人创建的文章（CI 后面还会再强制校验一次）
+      # ------------------------------------------------------------------
+      - name: 生成提出者可改动清单
+        id: owned
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          set -uo pipefail
+          ACTOR="${ISSUE_AUTHOR:-}"
+          if [ -z "$ACTOR" ]; then
+            echo "::warning::未取到 Issue 提出者，清单置空（Agent 只能新增）"
+            echo '{"owned":[],"others":[]}' > "$RUNNER_TEMP/owned.json"
+          else
+            python .github/ci/check_changes.py owned \
+              --mode git --actor "$ACTOR" --prefix "$BLOG_DIR" \
+              --out "$RUNNER_TEMP/owned.json" || echo '{"owned":[],"others":[]}' > "$RUNNER_TEMP/owned.json"
+          fi
+          echo "OWNED_MAP_FILE=$RUNNER_TEMP/owned.json" >> "$GITHUB_ENV"
+          python3 -c "
+          import json,pathlib
+          d=json.load(open('$RUNNER_TEMP/owned.json'))
+          print('可改动', len(d.get('owned',[])), '个；不可改动', len(d.get('others',[])), '个')
+          for p in d.get('owned',[]): print('  ✓', p)
+          "
+
+      - name: 运行 Agent（.md 校验 + 归属校验，不满足则丢弃重跑）
         id: agent
         continue-on-error: true
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
 
@@ -128,9 +158,33 @@ jobs:
           case "$ATTEMPTS" in ''|*[!0-9]*) ATTEMPTS=2 ;; esac
           [ "$ATTEMPTS" -lt 1 ] && ATTEMPTS=1
 
+          # 本次操作者 = 开 Issue 的人（workflow_dispatch 时由前一步写入 GITHUB_ENV）
+          ACTOR="${ISSUE_AUTHOR:-}"
+          echo "本次操作者：$ACTOR"
+
           reset_workspace() {
             git reset --hard HEAD >/dev/null 2>&1 || true
             git clean -fdq >/dev/null 2>&1 || true
+          }
+
+          # 把 git diff --name-status 转成 [{"path","status"}] 的 JSON
+          changes_json() {
+            git -c core.quotepath=false diff --cached --name-status | python3 -c '
+          import sys, json
+          items = []
+            for line in sys.stdin:
+                line = line.rstrip("\n")
+                if not line.strip():
+                    continue
+                parts = line.split("\t")
+                st = parts[0].strip()
+                path = (parts[-1] if len(parts) > 1 else "").strip()
+                prev = (parts[1].strip() if len(parts) > 2 and st.startswith("R") else "")
+                if not path:
+                    continue
+                items.append({"path": path, "status": st, "previous_filename": prev})
+            print(json.dumps(items, ensure_ascii=False))
+            '
           }
 
           ok=0
@@ -158,6 +212,7 @@ jobs:
               continue
             fi
 
+            # —— 守卫一：改动必须全是 .md ——
             NON_MD="$(printf '%s\n' "$CHANGED" | sed '/^[[:space:]]*$/d' | grep -vE '\.md$' || true)"
             if [ -n "$NON_MD" ]; then
               echo "::warning::第 $attempt 次的改动包含非 .md 文件，丢弃本次结果并重跑"
@@ -166,9 +221,23 @@ jobs:
               attempt=$((attempt + 1))
               continue
             fi
-
-            echo "✅ 第 $attempt 次通过校验，改动文件均为 .md："
+            echo "✅ 第 $attempt 次 .md 校验通过："
             printf '%s\n' "$CHANGED" | sed 's/^/  ✓ /'
+
+            # —— 守卫二：新增放行，修改/删除必须是本人创建的文件 ——
+            changes_json > "$RUNNER_TEMP/changes.json"
+            python .github/ci/check_changes.py check \
+              --mode git --actor "$ACTOR" --prefix "$BLOG_DIR" \
+              --files-json "$RUNNER_TEMP/changes.json"
+            oc_rc=$?
+            if [ "$oc_rc" -ne 0 ]; then
+              echo "::warning::第 $attempt 次的改动涉及他人创建的文件，丢弃本次结果并重跑"
+              reset_workspace
+              attempt=$((attempt + 1))
+              continue
+            fi
+
+            echo "✅ 第 $attempt 次归属校验通过"
             echo "attempts=$attempt" >> "$GITHUB_OUTPUT"
             ok=1
             break
@@ -176,7 +245,7 @@ jobs:
 
           if [ "$ok" != "1" ]; then
             reset_workspace
-            echo "::error::Agent 连续 $ATTEMPTS 次未产出合法的 .md 改动，放弃本次生成"
+            echo "::error::Agent 连续 $ATTEMPTS 次未产出合法改动（需同时通过：仅 .md + 仅改动本人创建的文件），放弃"
             exit 1
           fi
 
@@ -238,6 +307,8 @@ jobs:
           ISSUE_URL: ${{ github.event.issue.html_url }}
           SUMMARY: ${{ steps.agent.outputs.summary }}
           FULL_DIR: ${{ steps.agent.outputs.full_dir }}
+          OPERATION: ${{ steps.agent.outputs.operation }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
@@ -262,8 +333,36 @@ jobs:
             exit 1
           fi
 
-          git commit -m "$TITLE" -m "由 Issue #$ISSUE_NUMBER 自动生成中文文章
+          # 提交前再校验归属：修改/删除必须是本人创建的文件
+          git -c core.quotepath=false diff --cached --name-status | python3 -c '
+          import sys, json
+          items = []
+          for line in sys.stdin:
+              line = line.rstrip("\n")
+              if not line.strip():
+                  continue
+              parts = line.split("\t")
+              st = parts[0].strip()
+              path = (parts[-1] if len(parts) > 1 else "").strip()
+              prev = (parts[1].strip() if len(parts) > 2 and st.startswith("R") else "")
+              if path:
+                  items.append({"path": path, "status": st, "previous_filename": prev})
+          open("$RUNNER_TEMP/changes-final.json", "w", encoding="utf-8").write(json.dumps(items, ensure_ascii=False))
+          '
+          python .github/ci/check_changes.py check \
+            --mode git --actor "${ISSUE_AUTHOR:-}" --prefix "$BLOG_DIR" \
+            --files-json "$RUNNER_TEMP/changes-final.json"
+          if [ $? -ne 0 ]; then
+            echo "::error::提交前归属校验未通过，已终止推送"
+            git reset -q --hard HEAD
+            git clean -fdq
+            exit 1
+          fi
 
+          OP_CN="$(case "$OPERATION" in remove) echo 删除 ;; update) echo 修改 ;; *) echo 新增 ;; esac)"
+          git commit -m "$TITLE" -m "由 Issue #$ISSUE_NUMBER 自动${OP_CN}中文文章
+
+          操作: $OPERATION
           目录: $FULL_DIR
           Issue: $ISSUE_URL
           摘要: $SUMMARY
