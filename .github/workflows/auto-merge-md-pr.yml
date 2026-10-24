@@ -1,0 +1,308 @@
+name: Auto-merge PR (md-only)
+
+# PR 打开（或重开）时自动合并 —— 前提是该 PR 的 diff 只包含 .md 文件改动。
+# 任何其他后缀的改动都会拒绝合并，并在 PR 下留言说明。
+
+on:
+  pull_request:
+    types: [opened, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "要处理的 PR 编号（手动调试用）"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: auto-merge-md-pr-${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+      REPO: ${{ github.repository }}
+      # squash | merge | rebase（可用 vars.MERGE_METHOD 覆盖）
+      MERGE_METHOD: ${{ vars.MERGE_METHOD || 'squash' }}
+      # 合并后是否删除源分支（可用 vars.DELETE_BRANCH 覆盖）
+      DELETE_BRANCH: ${{ vars.DELETE_BRANCH || 'true' }}
+      # 冲突时放弃合并（true）；设为 false 则仍然尝试，由 GitHub 拒绝
+      ABORT_ON_CONFLICT: ${{ vars.ABORT_ON_CONFLICT || 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ------------------------------------------------------------------
+      # 1. 读取 PR 元信息：必须是 OPEN、非草稿
+      # ------------------------------------------------------------------
+      - name: 读取 PR 信息
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "::error::未拿到 PR 编号"
+            exit 1
+          fi
+          echo "处理 PR #$PR_NUMBER（$REPO）"
+
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json number,title,state,isDraft,baseRefName,headRefName,author,url \
+            > "$RUNNER_TEMP/pr.json"
+
+          python3 - <<'PY'
+          import json, os, pathlib
+          d = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "pr.json").read_text(encoding="utf-8"))
+          out = os.environ["GITHUB_OUTPUT"]
+
+          def emit(name, value):
+              delim = "EOF_" + name.upper()
+              with open(out, "a", encoding="utf-8") as fh:
+                  fh.write(f"{name}<<{delim}\n{value}\n{delim}\n")
+
+          emit("state", d.get("state", ""))
+          emit("draft", str(d.get("isDraft", False)).lower())
+          emit("base", d.get("baseRefName", ""))
+          emit("head", d.get("headRefName", ""))
+          emit("title", d.get("title", ""))
+          emit("author", (d.get("author") or {}).get("login", ""))
+
+          # 同时落盘供本步骤 shell 直接读取（GITHUB_OUTPUT 用的是 heredoc 写法，不便 grep）
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          (tmp / "meta_state").write_text(d.get("state", ""), encoding="utf-8")
+          (tmp / "meta_draft").write_text(str(d.get("isDraft", False)).lower(), encoding="utf-8")
+          print(f"PR #{d.get('number')} state={d.get('state')} draft={d.get('isDraft')} "
+                f"base={d.get('baseRefName')} head={d.get('headRefName')}")
+          PY
+
+          if [ "$(cat "$RUNNER_TEMP/meta_state")" != "OPEN" ]; then
+            echo "::notice::PR #$PR_NUMBER 非 OPEN 状态，跳过"
+            exit 0
+          fi
+          if [ "$(cat "$RUNNER_TEMP/meta_draft")" = "true" ]; then
+            echo "::notice::PR #$PR_NUMBER 仍是草稿，跳过（转为正式 PR 后可手动重跑本 workflow）"
+            exit 0
+          fi
+
+      # ------------------------------------------------------------------
+      # 2. 拉取 PR 全部改动文件，校验是否「仅 .md」
+      #    用 API（--paginate --slurp）+ python 解析，避免 jq 引号与路径转义问题
+      # ------------------------------------------------------------------
+      - name: 校验 PR diff 仅包含 .md 文件
+        id: check
+        if: steps.meta.outputs.state == 'OPEN' && steps.meta.outputs.draft == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
+            > "$RUNNER_TEMP/pr-files.json"
+
+          python3 - <<'PY'
+          import json, os, pathlib
+
+          raw = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "pr-files.json").read_text(encoding="utf-8"))
+          # --slurp 会把每一页包成数组：[[...], [...]]
+          items = []
+          if isinstance(raw, list) and raw and isinstance(raw[0], list):
+              for page in raw:
+                  items.extend(page)
+          elif isinstance(raw, list):
+              items = raw
+
+          paths = [f.get("filename", "") for f in items if isinstance(f, dict)]
+          paths = [p for p in paths if p]
+          non_md = sorted({p for p in paths if not p.lower().endswith(".md")})
+          md_only = sorted({p for p in paths if p.lower().endswith(".md")})
+
+          out = os.environ["GITHUB_OUTPUT"]
+
+          def emit(name, value):
+              delim = "EOF_" + name.upper()
+              with open(out, "a", encoding="utf-8") as fh:
+                  fh.write(f"{name}<<{delim}\n{value}\n{delim}\n")
+
+          emit("total", str(len(paths)))
+          emit("md_count", str(len(md_only)))
+          emit("non_md_count", str(len(non_md)))
+          emit("non_md_list", "\n".join(f"- `{p}`" for p in non_md) or "（无）")
+          emit("md_list", "\n".join(f"- `{p}`" for p in md_only) or "（无）")
+
+          print(f"改动文件 {len(paths)} 个，其中非 .md {len(non_md)} 个")
+          for p in non_md:
+              print(f"  ✗ {p}")
+          for p in md_only:
+              print(f"  ✓ {p}")
+
+          if not paths:
+              print("::warning::该 PR 没有任何文件改动")
+              emit("ok", "empty")
+          elif non_md:
+              print("::warning::该 PR 包含非 .md 改动，不自动合并")
+              emit("ok", "false")
+          else:
+              print("::notice::该 PR 改动全部为 .md 文件，可自动合并")
+              emit("ok", "true")
+          PY
+
+      # ------------------------------------------------------------------
+      # 3. 不合规：留言说明并正常结束（不算 workflow 失败）
+      # ------------------------------------------------------------------
+      - name: 不合规时留言说明
+        if: steps.check.outputs.ok == 'false' || steps.check.outputs.ok == 'empty'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.check.outputs.ok }}" = "empty" ]; then
+            BODY="⛔ **未自动合并**：该 PR 没有任何文件改动。"
+          else
+            {
+              echo "⛔ **未自动合并**：该 PR 的改动中包含非 \`.md\` 文件（共 ${{ steps.check.outputs.non_md_count }} 个）。"
+              echo
+              echo "本仓库的自动合并规则是 **diff 只允许 .md 文件**："
+              echo
+              echo "${{ steps.check.outputs.non_md_list }}"
+              echo
+              echo "请把上述文件从 PR 中移除（或改为通过其他流程提交）后重新打开此 PR。"
+            } > "$RUNNER_TEMP/comment.md"
+            BODY=""
+          fi
+          if [ -z "$BODY" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md"
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY"
+          fi
+          {
+            echo "### ⛔ 未自动合并 PR #$PR_NUMBER"
+            echo
+            echo "- 改动文件数：${{ steps.check.outputs.total || 0 }}"
+            echo "- 非 .md 文件数：${{ steps.check.outputs.non_md_count || 0 }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ------------------------------------------------------------------
+      # 4. 合规：等待 GitHub 计算合并状态，然后合并
+      #    --auto 优先（等 checks/review 满足后自动落），失败则回退直接合并
+      #    注意：mergeable 是枚举 MERGEABLE/CONFLICTING/UNKNOWN，不是 true/false
+      # ------------------------------------------------------------------
+      - name: 自动合并 PR
+        id: merge
+        if: steps.check.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # GitHub 在 PR 刚创建时异步计算合并状态，UNKNOWN 时轮询等待
+          MERGEABLE="UNKNOWN"
+          MSTATE="UNKNOWN"
+          for i in $(seq 1 12); do
+            gh pr view "$PR_NUMBER" --repo "$REPO" --json mergeable,mergeStateStatus > "$RUNNER_TEMP/ms.json"
+            read -r MERGEABLE MSTATE <<<"$(python3 -c "
+          import json,pathlib,os
+          d=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'ms.json').read_text(encoding='utf-8'))
+          print(d.get('mergeable','UNKNOWN'), d.get('mergeStateStatus','UNKNOWN'))")"
+            echo "第 $i 次探测：mergeable=$MERGEABLE mergeStateStatus=$MSTATE"
+            if [ "$MERGEABLE" != "UNKNOWN" ] && [ "$MSTATE" != "UNKNOWN" ]; then
+              break
+            fi
+            sleep 5
+          done
+          echo "mergeable=$MERGEABLE" >> "$GITHUB_OUTPUT"
+          echo "merge_state=$MSTATE"  >> "$GITHUB_OUTPUT"
+
+          if [ "$ABORT_ON_CONFLICT" = "true" ] \
+             && { [ "$MERGEABLE" = "CONFLICTING" ] || [ "$MSTATE" = "DIRTY" ]; }; then
+            echo "::error::PR #$PR_NUMBER 存在合并冲突（mergeable=$MERGEABLE / $MSTATE），放弃自动合并"
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "⚠️ **未自动合并**：该 PR 与 \`${{ steps.meta.outputs.base }}\` 存在冲突（\`$MSTATE\`）。请解决冲突后再重新打开或推送新提交。" || true
+            {
+              echo "### ⚠️ PR #$PR_NUMBER 存在冲突，未合并"
+              echo
+              echo "- mergeable：\`$MERGEABLE\` / \`$MSTATE\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          case "$MERGE_METHOD" in
+            merge)  FLAG="--merge"  ;;
+            rebase) FLAG="--rebase" ;;
+            *)      FLAG="--squash" ;;
+          esac
+          DELFLAG=""
+          [ "$DELETE_BRANCH" = "true" ] && DELFLAG="--delete-branch"
+          echo "合并方式：$FLAG $DELFLAG（当前状态 $MSTATE）"
+
+          set +e
+          gh pr merge "$PR_NUMBER" --repo "$REPO" "$FLAG" $DELFLAG --auto > "$RUNNER_TEMP/merge.log" 2>&1
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "--auto 合并未成功，回退为直接合并；首次输出："
+            cat "$RUNNER_TEMP/merge.log"
+            set +e
+            gh pr merge "$PR_NUMBER" --repo "$REPO" "$FLAG" $DELFLAG > "$RUNNER_TEMP/merge2.log" 2>&1
+            RC2=$?
+            set -e
+            if [ "$RC2" -ne 0 ]; then
+              {
+                echo "❌ **自动合并失败**："
+                echo
+                echo '```'
+                cat "$RUNNER_TEMP/merge.log"
+                cat "$RUNNER_TEMP/merge2.log"
+                echo '```'
+                echo
+                echo "常见原因：分支保护规则要求 review 或必须通过某些检查、仓库未开启 auto-merge，或 PR 来自 fork（token 只读）。"
+              } > "$RUNNER_TEMP/comment.md"
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md" || true
+              echo "::error::PR #$PR_NUMBER 自动合并失败"
+              cat "$RUNNER_TEMP/merge2.log"
+              exit 1
+            fi
+          fi
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+          echo "✅ PR #$PR_NUMBER 已合并（$FLAG）"
+
+      # ------------------------------------------------------------------
+      # 5. 合并成功：回帖 + summary
+      # ------------------------------------------------------------------
+      - name: 合并后留言
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          {
+            echo "✅ **已自动合并**（改动仅含 \`.md\` 文件，共 ${{ steps.check.outputs.total }} 个）"
+            echo
+            echo "- 合并方式：\`${{ env.MERGE_METHOD }}\`"
+            echo "- 目标分支：\`${{ steps.meta.outputs.base }}\`"
+            echo "- 改动文件："
+            echo "${{ steps.check.outputs.md_list }}"
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md" || true
+          {
+            echo "### ✅ 已自动合并 PR #$PR_NUMBER"
+            echo
+            echo "- 标题：${{ steps.meta.outputs.title }}"
+            echo "- 改动文件：${{ steps.check.outputs.total }} 个（全部 .md）"
+            echo "- 合并方式：\`${{ env.MERGE_METHOD }}\` → \`${{ steps.meta.outputs.base }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 失败时留言
+        if: failure() && steps.merge.outputs.conflict != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "⚠️ 自动合并流程异常，请查看 Actions 日志：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true

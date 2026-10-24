@@ -10,7 +10,8 @@ GitHub Issue 一创建，CI 里的 AI Agent 就按你的要求在 `blog/<中文�
 │   ├── main.py            # Agent 主程序（OpenAI 兼容 Chat Completions + function calling）
 │   └── requirements.txt
 └── workflows/
-    └── issue-blog-agent.yml   # issues.opened → 生成 → .md 校验（失败重跑）→ 直推主分支 → 回帖
+    ├── issue-blog-agent.yml   # issues.opened → 生成 → .md 校验（失败重跑）→ 直推主分支 → 回帖
+    └── auto-merge-md-pr.yml   # pull_request.opened/reopened → .md 校验通过则自动合并
 blog/                      # 博客根目录（可在 vars.BLOG_DIR 改），内容由 Agent 生成
 ```
 
@@ -28,6 +29,9 @@ blog/                      # 博客根目录（可在 vars.BLOG_DIR 改），内
 | `BLOG_DIR` | Variables | 可选 | 默认 `blog` |
 | `MAX_ROUNDS` | Variables | 可选 | Agent 最大工具轮数，默认 16 |
 | `MAX_ATTEMPTS` | Variables | 可选 | Agent 整轮重跑次数上限，默认 2（即失败最多再跑一次） |
+| `MERGE_METHOD` | Variables | 可选 | PR 自动合并方式：`squash`（默认）/ `merge` / `rebase` |
+| `DELETE_BRANCH` | Variables | 可选 | 自动合并后是否删除源分支，默认 `true` |
+| `ABORT_ON_CONFLICT` | Variables | 可选 | PR 冲突时放弃合并并留言，默认 `true` |
 
 ## 触发与流程
 
@@ -60,6 +64,29 @@ NON_MD="$(printf '%s\n' "$CHANGED" | sed '/^[[:space:]]*$/d' | grep -vE '\.md$' 
 [ -n "$NON_MD" ] && { git reset --hard HEAD; git clean -fd; }   # 丢弃重跑
 ```
 
+## PR 自动合并（仅 .md）
+
+`.github/workflows/auto-merge-md-pr.yml` 在 PR **打开或重新打开**时触发：
+
+1. 读取 PR 元信息：非 `OPEN` 状态、或仍是草稿 → 跳过。
+2. 用 API（`--paginate --slurp`）拉全部分页的改动文件，逐个判断后缀：
+   - 全部是 `.md` → 自动合并
+   - 有任何一个非 `.md` → **不合并**，在 PR 下留言列出违规文件
+   - 没有任何改动 → 不合并，留言说明
+3. 合并前轮询等待 GitHub 算出合并状态（`mergeable` / `mergeStateStatus`）；
+   冲突（`CONFLICTING` / `DIRTY`）时留言并放弃，否则执行 `gh pr merge`。
+4. 优先 `--auto`（等 checks/review 满足后自动落），失败则回退为直接合并；合并后回帖说明。
+
+> `mergeable` 在 gh CLI 里是枚举 `MERGEABLE / CONFLICTING / UNKNOWN`，不是 `true / false`，
+> 判冲突要比较 `CONFLICTING` 而不是布尔值。
+
+需要的仓库设置：
+
+- Settings → General → **Allow auto-merge**：已开启（否则 `--auto` 会失败，会回退直接合并）
+- Settings → Actions → General → Workflow permissions：**Read and write permissions**
+
+手动补跑：Actions → **Auto-merge PR (md-only)** → Run workflow → 填 `pr_number`。
+
 ## 目录名强制中文
 
 `sanitize_rel_dir()` 会过滤掉所有非汉字/数字字符：
@@ -91,6 +118,10 @@ Actions → **Issue → Blog (CN) Agent** → Run workflow → 填 `issue_number
   设置为允许 `github-actions[bot]` 推送，否则直接 push 会被规则拒绝。
 - 并发：多个 Issue 同时触发时，`concurrency` 按 Issue 号分组并不会阻止它们同时推 `main`；
   推送步骤已用 `git pull --rebase` 降低冲突概率，极端情况下仍可能因 rebase 冲突失败（重跑一次即可）。
+- ⚠️ **PR 自动合并只对同仓库分支的 PR 生效**：fork 来的 PR 在 `pull_request` 事件下 `GITHUB_TOKEN` 是只读的，
+  无法合并（会留言失败）。当前没有用 `pull_request_target`，就是为了避免把写权限暴露给 fork 的不可信代码。
+- ⚠️ 自动合并没有人工 review 环节，防线只有「diff 仅 .md」。若希望更安全，可给 `main` 加分支保护
+  （要求 review 或指定检查通过），此时 `--auto` 会在条件满足后才落合并。
 
 ## 仓库设置要求（否则推送会失败）
 
