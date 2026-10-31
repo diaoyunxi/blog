@@ -759,6 +759,8 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
    - 若目标文件不在清单中（是别人创建的），**不要调用改/删工具**，
      改为回复一句说明："该文章由 <其他人> 创建，当前 Issue 提出者无权修改/删除。"，不落盘。
    - 新增文章不受此限制，任何人都可以新增。
+   - **不要重复造轮子**：下面若提示「本 Issue 之前已经生成过文章」，
+     就必须用 `edit_article` 重写那篇，不许再 `save_article` 新增同主题文章。
 6. 事实性内容（版本号、参数、基准数据、时间、人名、API 形态、价格）必须先用 search_web 检索，
    再用 fetch_url 打开 1~3 个权威来源核实。搜不到就明确写"截至 {TODAY} 未找到权威来源"，禁止编造。
    **检索预算（硬性）**：search_web 最多 {MAX_SEARCH_CALLS} 次、fetch_url 最多 {MAX_FETCH_CALLS} 次。
@@ -794,6 +796,48 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
 `read_file` 只在你想确认某篇已有文章的原文时使用。"""
 
 
+def existing_article_hint() -> str:
+    """
+    找出 blog/ 里已经由「同一个 Issue」生成过的文章。
+
+    同一 Issue 被重跑（手动 dispatch / 失败重试）时，模型默认按「新增」处理，
+    结果同一个主题在仓库里留下两篇内容重复的文章。
+    这里按 front matter 的 source_issue 反查，命中就明确要求它改用 edit_article 覆盖更新。
+    """
+    if not BLOG_ROOT.exists():
+        return ""
+    targets = {ISSUE_URL} if ISSUE_URL else set()
+    if ISSUE_NUMBER:
+        targets.add(f"/issues/{ISSUE_NUMBER}")
+        targets.add(f"#{ISSUE_NUMBER}")
+    if not targets:
+        return ""
+
+    hits: list[str] = []
+    try:
+        for p in sorted(BLOG_ROOT.rglob("*.md")):
+            if p.name.lower().startswith("en."):
+                continue
+            try:
+                head = p.read_text(encoding="utf-8", errors="replace")[:4000]
+            except OSError:
+                continue
+            if any(t and t in head for t in targets):
+                hits.append(p.relative_to(BLOG_ROOT).as_posix())
+    except OSError:
+        return ""
+
+    if not hits:
+        return ""
+    return (
+        "⚠️ 本 Issue 之前已经生成过文章，blog/ 里现存：\n"
+        + "\n".join(f"- {BLOG_DIR_NAME}/{h}" for h in hits)
+        + "\n\n**本次必须调用 `edit_article` 更新这些文件中的那篇（整篇重写），"
+        "绝对不要再用 `save_article` 新增一篇**，否则仓库里会留下重复内容。"
+        "若你判断确实需要另开一篇不同主题的文章，也要先说明为什么现有那篇不适用。"
+    )
+
+
 def owned_files_hint() -> str:
     """本次 Issue 提出者可改动的文件清单（由 workflow 预先算好写入 JSON）。"""
     path = os.getenv("OWNED_MAP_FILE") or ""
@@ -817,6 +861,7 @@ def build_user_prompt() -> str:
         f"日期: {TODAY}\n\n"
         f"当前博客目录结构（根目录 {BLOG_DIR_NAME}/，全部为中文）：\n{blog_tree()}\n\n"
         f"{owned_files_hint()}\n\n"
+        f"{existing_article_hint()}\n\n"
         f"Issue 正文（需求）如下：\n-----\n{ISSUE_BODY}\n-----\n\n"
         "请先判断操作类型（新增 / 修改 / 删除），需要核实时先检索，"
         "然后调用 save_article / edit_article / delete_article 落盘（目录名必须是中文，只能改 .md）。"
