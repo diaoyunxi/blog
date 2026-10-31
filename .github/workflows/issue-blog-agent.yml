@@ -40,16 +40,16 @@ jobs:
       BASE_BACKOFF: ${{ vars.BASE_BACKOFF || '2' }}
       BASE_BRANCH: ${{ github.event.repository.default_branch }}
       # Agent 最多尝试次数：diff 校验不过就丢弃重跑，用完仍未产出合法 .md 改动则失败
-      MAX_ATTEMPTS: ${{ vars.MAX_ATTEMPTS || '2' }}
+      MAX_ATTEMPTS: ${{ vars.MAX_ATTEMPTS || '3' }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -110,15 +110,6 @@ jobs:
             echo "ISSUE_BODY_FILE=$RUNNER_TEMP/issue/body.md"
           } >> "$GITHUB_ENV"
 
-      # ------------------------------------------------------------------
-      # 运行 Agent：最多 MAX_ATTEMPTS 次
-      # 每次先重置工作区到干净状态；产出后校验 diff —— 只允许 .md 后缀改动，
-      # 出现任何非 .md 改动就丢弃本次结果并整轮重跑；全部尝试用完才判失败。
-      # ------------------------------------------------------------------
-      # ------------------------------------------------------------------
-      # 预先算出「本次 Issue 提出者可改动的文件清单」，交给 Agent 参考，
-      # 让它不要去改/删别人创建的文章（CI 后面还会再强制校验一次）
-      # ------------------------------------------------------------------
       - name: 生成提出者可改动清单
         id: owned
         env:
@@ -154,38 +145,22 @@ jobs:
         run: |
           set -uo pipefail
 
-          ATTEMPTS="${MAX_ATTEMPTS:-2}"
-          case "$ATTEMPTS" in ''|*[!0-9]*) ATTEMPTS=2 ;; esac
+          ATTEMPTS="${MAX_ATTEMPTS:-3}"
+          case "$ATTEMPTS" in ''|*[!0-9]*) ATTEMPTS=3 ;; esac
           [ "$ATTEMPTS" -lt 1 ] && ATTEMPTS=1
 
-          # 本次操作者 = 开 Issue 的人（workflow_dispatch 时由前一步写入 GITHUB_ENV）
           ACTOR="${ISSUE_AUTHOR:-}"
           echo "本次操作者：$ACTOR"
+
+          DIAG="$RUNNER_TEMP/diag.md"
+          : > "$DIAG"
 
           reset_workspace() {
             git reset --hard HEAD >/dev/null 2>&1 || true
             git clean -fdq >/dev/null 2>&1 || true
           }
 
-          # 把 git diff --name-status 转成 [{"path","status"}] 的 JSON
-          changes_json() {
-            git -c core.quotepath=false diff --cached --name-status | python3 -c '
-          import sys, json
-          items = []
-            for line in sys.stdin:
-                line = line.rstrip("\n")
-                if not line.strip():
-                    continue
-                parts = line.split("\t")
-                st = parts[0].strip()
-                path = (parts[-1] if len(parts) > 1 else "").strip()
-                prev = (parts[1].strip() if len(parts) > 2 and st.startswith("R") else "")
-                if not path:
-                    continue
-                items.append({"path": path, "status": st, "previous_filename": prev})
-            print(json.dumps(items, ensure_ascii=False))
-            '
-          }
+          note() { printf '%s\n' "$*" >> "$DIAG"; }
 
           ok=0
           attempt=1
@@ -198,15 +173,42 @@ jobs:
             echo "::endgroup::"
 
             if [ "$rc" -ne 0 ]; then
-              echo "::warning::第 $attempt 次 Agent 运行失败（exit $rc）"
+              echo "::warning::第 $attempt 次：Agent 进程异常退出（exit $rc）"
+              {
+                note "**第 $attempt 次：Agent 进程异常退出（exit $rc）**"
+                note '```'
+                tail -n 25 "$RUNNER_TEMP/agent.log" || true
+                note '```'
+              } >> "$DIAG"
               attempt=$((attempt + 1))
               continue
             fi
 
             git add -A
+            git -c core.quotepath=false status --porcelain || true
+
+            # 改动清单由独立脚本生成（历史 bug：内嵌 python 被 YAML 缩进破坏）
+            python .github/ci/git_changes.py "$RUNNER_TEMP/changes.json"
+            gen_rc=$?
+            if [ "$gen_rc" -ne 0 ]; then
+              echo "::error::第 $attempt 次：生成改动清单失败（exit $gen_rc）"
+              {
+                note "**第 $attempt 次：生成改动清单失败（exit $gen_rc）**"
+                note ""
+                note '> git_changes.py 未能输出合法改动清单，已跳过本次结果。'
+              } >> "$DIAG"
+              reset_workspace
+              attempt=$((attempt + 1))
+              continue
+            fi
+
             CHANGED="$(git -c core.quotepath=false diff --cached --name-only || true)"
             if [ -z "$CHANGED" ]; then
-              echo "::warning::第 $attempt 次运行未产生任何文件改动"
+              echo "::warning::第 $attempt 次：Agent 未产生任何文件改动"
+              {
+                note "**第 $attempt 次：Agent 未产生任何文件改动**（工作区 git status 为空）"
+                note ""
+              } >> "$DIAG"
               git reset -q >/dev/null 2>&1 || true
               attempt=$((attempt + 1))
               continue
@@ -215,8 +217,14 @@ jobs:
             # —— 守卫一：改动必须全是 .md ——
             NON_MD="$(printf '%s\n' "$CHANGED" | sed '/^[[:space:]]*$/d' | grep -vE '\.md$' || true)"
             if [ -n "$NON_MD" ]; then
-              echo "::warning::第 $attempt 次的改动包含非 .md 文件，丢弃本次结果并重跑"
+              echo "::warning::第 $attempt 次：改动包含非 .md 文件，丢弃本次结果并重跑"
               printf '%s\n' "$NON_MD" | sed 's/^/  ✗ /'
+              {
+                note "**第 $attempt 次：改动包含非 .md 文件，已丢弃**"
+                note '```'
+                printf '%s\n' "$NON_MD" >> "$DIAG"
+                note '```'
+              } >> "$DIAG"
               reset_workspace
               attempt=$((attempt + 1))
               continue
@@ -225,13 +233,18 @@ jobs:
             printf '%s\n' "$CHANGED" | sed 's/^/  ✓ /'
 
             # —— 守卫二：新增放行，修改/删除必须是本人创建的文件 ——
-            changes_json > "$RUNNER_TEMP/changes.json"
             python .github/ci/check_changes.py check \
               --mode git --actor "$ACTOR" --prefix "$BLOG_DIR" \
-              --files-json "$RUNNER_TEMP/changes.json"
-            oc_rc=$?
+              --files-json "$RUNNER_TEMP/changes.json" 2>&1 | tee "$RUNNER_TEMP/ownership.log"
+            oc_rc=${PIPESTATUS[0]}
             if [ "$oc_rc" -ne 0 ]; then
-              echo "::warning::第 $attempt 次的改动涉及他人创建的文件，丢弃本次结果并重跑"
+              echo "::warning::第 $attempt 次：归属校验未通过（exit $oc_rc）"
+              {
+                note "**第 $attempt 次：归属校验未通过（exit $oc_rc）**"
+                note '```'
+                tail -n 30 "$RUNNER_TEMP/ownership.log" || true
+                note '```'
+              } >> "$DIAG"
               reset_workspace
               attempt=$((attempt + 1))
               continue
@@ -251,7 +264,7 @@ jobs:
 
       - name: 上传 Agent 执行轨迹
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: agent-trace-${{ github.run_id }}
           path: ${{ runner.temp }}/agent-trace.md
@@ -262,11 +275,12 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
           TRACE_TAIL: ${{ steps.agent.outputs.trace_tail }}
+          ERROR_MESSAGE: ${{ steps.agent.outputs.error_message }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           ERR=$(grep -a '::error::' "$RUNNER_TEMP/agent.log" | sed 's/^::error:://' | tail -n 3 || true)
-          [ -z "$ERR" ] && ERR="（无 ::error:: 输出）"
+          [ -z "$ERR" ] && ERR="${ERROR_MESSAGE:-（无 ::error:: 输出）}"
           printf '%s' "${TRACE_TAIL:-（无轨迹）}" > "$RUNNER_TEMP/trace-tail.txt"
           {
             echo "❌ Agent 执行失败（已重跑 ${MAX_ATTEMPTS} 次，仍未产出仅含 .md 的合法改动）："
@@ -275,6 +289,12 @@ jobs:
             echo "$ERR"
             echo '```'
             echo
+            if [ -s "$RUNNER_TEMP/diag.md" ]; then
+              echo "### 逐次失败诊断"
+              echo
+              cat "$RUNNER_TEMP/diag.md"
+              echo
+            fi
             echo "<details><summary>完整执行轨迹（尾部）</summary>"
             echo
             echo '```text'
@@ -334,21 +354,7 @@ jobs:
           fi
 
           # 提交前再校验归属：修改/删除必须是本人创建的文件
-          git -c core.quotepath=false diff --cached --name-status | python3 -c '
-          import sys, json
-          items = []
-          for line in sys.stdin:
-              line = line.rstrip("\n")
-              if not line.strip():
-                  continue
-              parts = line.split("\t")
-              st = parts[0].strip()
-              path = (parts[-1] if len(parts) > 1 else "").strip()
-              prev = (parts[1].strip() if len(parts) > 2 and st.startswith("R") else "")
-              if path:
-                  items.append({"path": path, "status": st, "previous_filename": prev})
-          open("$RUNNER_TEMP/changes-final.json", "w", encoding="utf-8").write(json.dumps(items, ensure_ascii=False))
-          '
+          python .github/ci/git_changes.py "$RUNNER_TEMP/changes-final.json"
           python .github/ci/check_changes.py check \
             --mode git --actor "${ISSUE_AUTHOR:-}" --prefix "$BLOG_DIR" \
             --files-json "$RUNNER_TEMP/changes-final.json"
