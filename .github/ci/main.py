@@ -29,6 +29,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 import textwrap
 import time
 from datetime import datetime, timezone, timedelta
@@ -189,6 +190,58 @@ def blog_tree(max_depth: int = 3, max_entries: int = 400) -> str:
 
     walk(BLOG_ROOT, 0)
     return "\n".join(lines) if lines else "(目录为空)"
+
+
+def read_file(path: str, limit: int = 200) -> str:
+    """只读工具：读取 blog/ 下的 .md 文章，或运行器临时目录里的 Issue 正文。
+
+    模型经常会先尝试 read_file 再去动笔（尤其是想再读一遍 Issue 正文）。
+    早期版本没有这个工具，模型调用它直接 KeyError 白耗一轮。
+    """
+    raw = (path or "").strip()
+    if not raw:
+        return json.dumps({"ok": False, "error": "未提供 path"}, ensure_ascii=False)
+
+    p = pathlib.Path(raw)
+    if not p.is_absolute():
+        p = BLOG_ROOT / raw
+    try:
+        resolved = p.resolve()
+    except OSError:
+        resolved = p
+
+    tmp_root = pathlib.Path(
+        os.getenv("RUNNER_TEMP") or os.getenv("TMPDIR") or tempfile.gettempdir()
+    ).resolve()
+    inside_blog = resolved == BLOG_ROOT or BLOG_ROOT in resolved.parents
+    inside_tmp = resolved == tmp_root or tmp_root in resolved.parents
+    if not (inside_blog or inside_tmp):
+        return json.dumps(
+            {"ok": False, "error": f"只允许读取 {BLOG_DIR_NAME}/ 或运行器临时目录下的文件：{raw}"},
+            ensure_ascii=False,
+        )
+    if not resolved.is_file():
+        return json.dumps({"ok": False, "error": f"文件不存在：{raw}"}, ensure_ascii=False)
+    if not inside_tmp and resolved.suffix.lower() != ".md":
+        return json.dumps({"ok": False, "error": "只允许读取 .md 文件"}, ensure_ascii=False)
+
+    try:
+        text = resolved.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return json.dumps({"ok": False, "error": f"读取失败：{exc}"}, ensure_ascii=False)
+
+    lines = text.split("\n")
+    n = max(1, int(limit or 200))
+    return json.dumps(
+        {
+            "ok": True,
+            "path": str(resolved),
+            "total_lines": len(lines),
+            "returned_lines": min(n, len(lines)),
+            "content": "\n".join(lines[:n]),
+        },
+        ensure_ascii=False,
+    )
 
 
 def sanitize_segment(seg: str, max_len: int = 40) -> str:
@@ -571,6 +624,21 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "read_file",
+            "description": "只读：查看 blog/ 下已有 .md 文章的内容（用于判断该改哪篇、避免重复造轮子）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "相对博客根目录的 .md 路径，如 人工智能/生成式模型/文生图扩散原理/cn.md"},
+                    "limit": {"type": "integer", "description": "最多返回多少行，默认 200"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_article",
             "description": "【新增文章】在中文目录下创建 cn.md。目录名必须是中文。",
             "parameters": {
@@ -632,6 +700,7 @@ TOOL_FUNCS = {
     "search_web": lambda **kw: search_web(kw.get("query", ""), kw.get("max_results", 6)),
     "fetch_url": lambda **kw: fetch_url(kw.get("url", "")),
     "list_blog_tree": lambda **kw: blog_tree(),
+    "read_file": lambda **kw: read_file(kw.get("path", ""), kw.get("limit", 200)),
     "save_article": lambda **kw: save_article(
         kw.get("target_dir", ""), kw.get("cn_md", ""), kw.get("summary", "")
     ),
@@ -711,7 +780,10 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
 10. 不要写与主题无关的内容，不要在正文里提及 issue、机器人或本流程。
 11. 一次运行只做一种操作、只调用一次写入类工具（save_article / edit_article / delete_article 三选一）。
 
-最后必须落盘（或按第 5 条明确说明无权改动），成功后用一句话总结即可。"""
+最后必须落盘（或按第 5 条明确说明无权改动），成功后用一句话总结即可。
+
+补充：Issue 正文已在下面完整给出，不要为了读 Issue 再去调用工具；
+`read_file` 只在你想确认某篇已有文章的原文时使用。"""
 
 
 def owned_files_hint() -> str:
