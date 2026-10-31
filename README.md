@@ -9,12 +9,28 @@ GitHub Issue 一创建，CI 里的 AI Agent 就按你的要求在 `blog/<中文�
 ├── ci/
 │   ├── main.py            # Agent 主程序（OpenAI 兼容 Chat Completions + function calling）
 │   └── requirements.txt
-docs/
-└── ai-prompts.md          # AI 默认提示词全记录（system / user / 运行时追加指令 / 工具表）
 └── workflows/
     ├── issue-blog-agent.yml   # issues.opened → 生成 → .md 校验（失败重跑）→ 直推主分支 → 回帖
-    └── auto-merge-md-pr.yml   # pull_request_target.opened/reopened → .md 校验通过则自动合并
+    ├── auto-merge-md-pr.yml   # pull_request_target.opened/reopened → .md 校验通过则自动合并
+    └── deploy-pages.yml       # push main → 构建静态站 → 部署 Cloudflare Pages
+docs/
+└── ai-prompts.md          # AI 默认提示词全记录（system / user / 运行时追加指令 / 工具表）
 blog/                      # 博客根目录（可在 vars.BLOG_DIR 改），内容由 Agent 生成
+├── <中文分类>/<中文主题>/cn.md   # 中文正文（含 YAML front matter）
+└── <中文分类>/<中文主题>/en.md   # 英文正文（可选，有则前端语言切换可用）
+
+# —— 静态站点（Cloudflare Pages）——
+index.html                 # 站点唯一 HTML 外壳，外链全部 CSS/JS
+404.html                   # Cloudflare Pages 自动生效的 404 页
+assets/
+├── css/base.css           # 整页样式与设计系统（明暗主题、组件）
+├── css/markdown.css       # Markdown 正文渲染样式
+├── js/app.js              # 路由、搜索、目录、渲染逻辑
+└── img/favicon.svg
+build.mjs                  # 构建脚本：扫描 blog/ → posts.json / rss.xml / sitemap.xml → dist/
+package.json               # npm run build
+wrangler.toml              # Cloudflare Pages 配置（输出目录 dist）
+_headers / _redirects      # Pages 自定义响应头与重定向
 ```
 
 ## 需要配置的 Secrets / Variables
@@ -34,6 +50,8 @@ blog/                      # 博客根目录（可在 vars.BLOG_DIR 改），内
 | `MERGE_METHOD` | Variables | 可选 | PR 自动合并方式：`squash`（默认）/ `merge` / `rebase` |
 | `DELETE_BRANCH` | Variables | 可选 | 自动合并后是否删除源分支，默认 `true` |
 | `ABORT_ON_CONFLICT` | Variables | 可选 | PR 冲突时放弃合并并留言，默认 `true` |
+| `CLOUDFLARE_API_TOKEN` | Secrets | 部署用 | Cloudflare API Token（需 Pages 编辑权限） |
+| `CLOUDFLARE_ACCOUNT_ID` | Secrets | 部署用 | Cloudflare Account ID |
 
 ## 触发与流程
 
@@ -199,3 +217,66 @@ gh api /repos/<owner>/<repo>/actions/permissions/workflow --jq '.'
 ```
 
 若主分支启用了 branch protection 且包含限制推送的规则，还需把 `github-actions[bot]` 加入允许列表。
+
+---
+
+## 🌐 静态站点（Cloudflare Pages）
+
+仓库同时是一个**纯静态博客站点**：Agent 只负责往 `blog/` 写 Markdown，站点由前端在运行时读取并渲染，
+因此**新增文章不需要改任何前端代码**——推送即上线。
+
+### 架构
+
+```
+浏览器
+ ├── GET /                     → index.html（唯一 HTML 外壳）
+ ├── GET /posts.json           → build.mjs 生成的文章索引
+ ├── GET /blog/<分类>/<主题>/cn.md → 原始 Markdown（运行时按需拉取）
+ └── 渲染：marked + DOMPurify + highlight.js + KaTeX
+```
+
+- **全外链**：HTML 通过 `<link>` / `<script src>` 引用 `assets/` 下的样式与脚本，无内联样式表；
+  渲染依赖走 CDN（marked / DOMPurify / highlight.js / KaTeX）。
+- **样式分离**：`assets/css/base.css` 管整页与组件，`assets/css/markdown.css` 专管 Markdown 正文排版。
+- **路由**：hash 路由（`#/`、`#/post/<slug>`），纯静态托管无需服务端 rewrite。
+- **交互**：站内搜索、分类筛选、文章目录（TOC）、代码一键复制、阅读进度、上下篇导航、明暗主题、中英切换。
+
+### 构建
+
+```bash
+npm run build     # = node build.mjs
+```
+
+`build.mjs` 会：扫描 `blog/` 下的 `cn.md` / `en.md` → 解析 front matter → 生成
+`dist/posts.json`（文章索引，站点据此渲染列表与目录）、`dist/rss.xml`、`dist/sitemap.xml`、`dist/robots.txt`
+→ 拷贝 `index.html` / `assets/` / `blog/` / `_headers` / `_redirects` 到 `dist/`。
+
+> `dist/` 已在 `.gitignore` 中，不入库；Cloudflare 每次部署都会重新构建，**新文章会自动进入索引**。
+
+### 部署到 Cloudflare Pages
+
+**方式一（推荐，零维护）**：Pages 控制台连接本仓库后设置
+
+| 配置项 | 值 |
+|---|---|
+| 框架预设 | None |
+| 构建命令 | `npm run build` |
+| 构建输出目录 | `dist` |
+| 生产分支 | `main` |
+
+**方式二（CI 自动部署）**：已内置 `.github/workflows/deploy-pages.yml`，配置好
+`CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID` 两个 Secret 后，`main` 每次推送自动构建并发布。
+
+### 本地预览
+
+```bash
+npm run build
+npx wrangler pages dev dist     # 或 python3 -m http.server -d dist
+```
+
+### 修改站点外观
+
+- 配色、字号、间距、组件 → `assets/css/base.css`（顶部 `:root` 即设计令牌）
+- 正文排版（表格、代码块、公式）→ `assets/css/markdown.css`
+- 交互逻辑 → `assets/js/app.js`
+- 站点标题 / 描述 / 默认域名 → `index.html` 与 `build.mjs` 顶部的 `SITE_URL`

@@ -136,7 +136,7 @@ function copyToDist() {
   if (existsSync(DIST)) rmSync(DIST, { recursive: true, force: true });
   mkdirSync(DIST, { recursive: true });
 
-  const copyList = ["index.html", "assets", "blog", "_headers", "_redirects"];
+  const copyList = ["index.html", "404.html", "assets", "blog", "_headers", "_redirects"];
   for (const item of copyList) {
     const src = join(ROOT, item);
     if (!existsSync(src)) continue;

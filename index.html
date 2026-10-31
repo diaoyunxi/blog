@@ -29,12 +29,28 @@
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 </head>
 <body>
+  <!-- 阅读进度条 -->
+  <div class="progress-bar" aria-hidden="true"><span id="progress-fill"></span></div>
+
   <header class="site-header">
     <div class="container site-header__inner">
       <a class="brand" href="#/" data-link>
         <span class="brand__mark">d</span>
         <span class="brand__name-long">diaoyunxi<span style="color:var(--text-3);font-weight:400"> · 博客</span></span>
       </a>
+
+      <!-- 站内搜索 -->
+      <div class="search" id="search-box">
+        <div class="search__field">
+          <svg class="search__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="search-input" type="search" autocomplete="off" aria-label="搜索文章" placeholder="搜索标题、摘要、标签…" />
+        </div>
+        <div class="search-panel" id="search-panel" role="listbox"></div>
+        <button type="button" class="icon-btn search__toggle" id="search-toggle" aria-label="搜索">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        </button>
+      </div>
+
       <nav class="nav-actions" aria-label="主导航">
         <div class="lang-switch" role="group" aria-label="语言切换">
           <button type="button" data-lang="zh-CN" aria-pressed="true">中文</button>
@@ -62,6 +78,11 @@
       </span>
     </div>
   </footer>
+
+  <!-- 回到顶部 -->
+  <button type="button" class="back-top" id="back-top" aria-label="回到顶部">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+  </button>
 
   <noscript>
     <div class="container" style="padding:48px 0;color:var(--text-2)">
