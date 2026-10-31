@@ -280,9 +280,44 @@ def creator_of(path: str, mode: str, added_map: dict | None = None) -> tuple[str
 # ----------------------------------------------------------------------------
 # 子命令：check
 # ----------------------------------------------------------------------------
+def load_files(path: str) -> list | None:
+    """
+    读取改动清单。
+
+    返回 None 表示「读不到 / 不是合法 JSON」——这必须被当成明确的错误抛出来，
+    绝不能退化成「空列表」而被当成「没有改动」通过校验：那正是历史上
+    「改动清单被写成空文件 → 归属校验静默失败」的根因。
+    """
+    if not path:
+        log("::error::未提供 --files-json，无法校验归属")
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read()
+    except OSError as exc:
+        log(f"::error::改动清单文件不可读（{path}）：{exc}")
+        return None
+    if not raw.strip():
+        log(f"::error::改动清单文件为空（{path}）——上游生成步骤很可能已经失败，请检查 git_changes.py 的输出")
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        log(f"::error::改动清单不是合法 JSON（{path}）：{exc}")
+        return None
+    if not isinstance(data, list):
+        log(f"::error::改动清单格式错误（{path}）：应为数组，实际为 {type(data).__name__}")
+        return None
+    return data
+
+
 def cmd_check(args) -> int:
-    with open(args.files_json, encoding="utf-8") as f:
-        files = json.load(f)
+    files = load_files(args.files_json)
+    if files is None:
+        emit("allowed", "false")
+        emit("report", "改动清单读取失败，拒绝（详见上方 ::error:: 输出）")
+        return 2
+
     actor = (args.actor or "").strip().lower()
     if not actor:
         log("::error::未提供本次操作者（--actor），无法校验归属")
@@ -290,7 +325,15 @@ def cmd_check(args) -> int:
         emit("report", "未获取到操作者身份，拒绝")
         return 2
 
-    added_map = git_added_map(args.prefix) if args.mode == "git" else None
+    try:
+        added_map = git_added_map(args.prefix) if args.mode == "git" else None
+    except Exception as exc:  # noqa: BLE001
+        # 索引建不出来时不能让异常直接冒泡成「无理由的 exit 1」，
+        # 否则 workflow 只会打印一句误导性的「改动涉及他人创建的文件」。
+        log(f"::error::构建「文件创建者」索引失败：{type(exc).__name__}: {exc}")
+        emit("allowed", "false")
+        emit("report", f"构建创建者索引失败：{exc}")
+        return 3
 
     added, checked, violations = [], [], []
     for item in files:
