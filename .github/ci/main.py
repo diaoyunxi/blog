@@ -131,11 +131,18 @@ def fail(msg: str, code: int = 1) -> "NoReturn":  # type: ignore[valid-type]
 # 读取 issue 内容
 # ----------------------------------------------------------------------------
 def read_env_or_file(env_key: str, file_key: str) -> str:
-    for key in (env_key, file_key):
-        val = os.getenv(key)
-        if val:
-            return val
-    path = os.getenv(file_key + "_PATH") or ""
+    """先取环境变量本体；取不到再把 file_key 的值当成「文件路径」读出来。
+
+    注意：file_key（如 ISSUE_BODY_FILE）本身是**存放路径的环境变量名**，
+    它的值是路径而不是内容。早期实现把它直接 return 了，
+    结果 Issue 正文变成了一串 "/home/runner/work/_temp/issue/body.md"，
+    提示词里根本没有真实需求（模型只能靠 read_file 自己捞），
+    依赖正文做分析的自检逻辑也就全部失效。
+    """
+    direct = os.getenv(env_key)
+    if direct:
+        return direct
+    path = os.getenv(file_key) or os.getenv(file_key + "_PATH") or ""
     if path and pathlib.Path(path).exists():
         return pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
     return ""
@@ -945,6 +952,10 @@ def review_article(md: str) -> tuple[bool, str]:
 
     if not problems:
         return True, f"自检通过（约 {n} 字，逐条要求均已覆盖）"
+    trace(
+        "[review] 检出条目 "
+        f"{len(issue_checklist())} 条；要求篇幅 {required_length()} 字，实际 {n} 字"
+    )
     return False, "\n".join(problems)
 
 
