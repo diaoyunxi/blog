@@ -3,3 +3,7 @@
 
 # 将裸 feed 路径规范到 rss.xml
 /feed  /rss.xml  301
+
+# 文章路径回退到 SPA 外壳（真实路径路由：/post/<slug>/）
+# 仅匹配 /post/*，其余未匹配路径仍走 404.html
+/post/*  /index.html  200

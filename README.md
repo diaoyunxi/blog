@@ -229,8 +229,8 @@ gh api /repos/<owner>/<repo>/actions/permissions/workflow --jq '.'
 
 ```
 浏览器
- ├── GET /                     → index.html（唯一 HTML 外壳）
- ├── GET /posts.json           → build.mjs 生成的文章索引
+ ├── GET /                    → index.html（唯一 HTML 外壳）
+ ├── GET /posts.json          → build.mjs 生成的文章索引
  ├── GET /blog/<分类>/<主题>/cn.md → 原始 Markdown（运行时按需拉取）
  └── 渲染：marked + DOMPurify + highlight.js + KaTeX
 ```
@@ -238,7 +238,8 @@ gh api /repos/<owner>/<repo>/actions/permissions/workflow --jq '.'
 - **全外链**：HTML 通过 `<link>` / `<script src>` 引用 `assets/` 下的样式与脚本，无内联样式表；
   渲染依赖走 CDN（marked / DOMPurify / highlight.js / KaTeX）。
 - **样式分离**：`assets/css/base.css` 管整页与组件，`assets/css/markdown.css` 专管 Markdown 正文排版。
-- **路由**：hash 路由（`#/`、`#/post/<slug>`），纯静态托管无需服务端 rewrite。
+- **路由**：真实路径（`/`、`/post/<中文分类>/<中文主题>/`），由 `_redirects` 的 `/post/* → /index.html 200` 做 SPA 回退；
+  链接走 History API，中键/新标签页打开等原生行为不受影响。文章 URL 对搜索引擎与 RSS 订阅者可见。
 - **交互**：站内搜索、分类筛选、文章目录（TOC）、代码一键复制、阅读进度、上下篇导航、明暗主题、中英切换。
 
 ### 构建

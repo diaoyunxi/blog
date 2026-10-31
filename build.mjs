@@ -61,15 +61,15 @@ function buildPosts() {
     const base = relative(BLOG, f);
     const dir = dirname(base);
     const name = base.slice(dir.length + 1);
-    if (name === "cn.md") (byDir[dir] = byDir[dir] || {}).cn = "blog/" + base;
-    else if (name === "en.md") (byDir[dir] = byDir[dir] || {}).en = "blog/" + base;
+    if (name === "cn.md") (byDir[dir] = byDir[dir] || {}).cn = "/blog/" + base;
+    else if (name === "en.md") (byDir[dir] = byDir[dir] || {}).en = "/blog/" + base;
   }
 
   const posts = [];
   for (const dir of Object.keys(byDir)) {
     const entry = byDir[dir];
     const primary = entry.cn || entry.en;
-    const text = readFileSync(join(BLOG, relative(BLOG, join(ROOT, primary))), "utf8");
+    const text = readFileSync(join(BLOG, primary.replace(/^\/blog\//, "")), "utf8");
     const fm = parseFrontMatter(text);
     const segs = dir.split("/");
     posts.push({
@@ -92,7 +92,7 @@ function buildPosts() {
 /* ---------- 生成 RSS ---------- */
 function buildRss(posts) {
   const items = posts.map((p) => {
-    const link = `${SITE_URL}/#/post/${encodeURIComponent(p.slug)}`;
+    const link = `${SITE_URL}/post/${p.slug.split("/").map(encodeURIComponent).join("/")}/`;
     return `    <item>
       <title>${escapeXml(p.title)}</title>
       <link>${escapeXml(link)}</link>
@@ -117,7 +117,7 @@ ${items}
 /* ---------- 生成 Sitemap ---------- */
 function buildSitemap(posts) {
   const urls = [`<url><loc>${escapeXml(SITE_URL)}/</loc></url>`].concat(
-    posts.map((p) => `<url><loc>${escapeXml(SITE_URL)}/#/post/${encodeURIComponent(p.slug)}</loc></url>`)
+    posts.map((p) => `<url><loc>${escapeXml(SITE_URL)}/post/${p.slug.split("/").map(encodeURIComponent).join("/")}/</loc></url>`)
   ).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

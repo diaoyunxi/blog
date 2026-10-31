@@ -38,6 +38,9 @@
 
 .prose > :first-child { margin-top: 0; }
 
+/* 正文首个 H1 与页面头部标题重复（Markdown 源文件独立阅读时仍需要它，故仅站内隐藏） */
+.prose > h1:first-child { display: none; }
+
 .prose p { margin: 1.1em 0; }
 
 /* 行内代码 */
@@ -48,7 +51,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.12em 0.4em;
-  color: var(--accent-hover);
+  color: var(--accent-text);
 }
 
 /* 代码块 */
@@ -70,12 +73,17 @@
   color: inherit;
   font-size: 0.9rem;
 }
+/* highlight.js 深色主题自带背景，覆盖为透明以沿用本页暖黑代码块配色 */
+.prose pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
 .prose pre code::before,
 .prose pre code::after { content: none; }
 
 /* 链接 */
 .prose a {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   transition: border-color var(--t-fast);
@@ -101,7 +109,7 @@
 .prose ul,
 .prose ol { margin: 1.1em 0; padding-left: 1.5em; }
 .prose li { margin: 0.4em 0; }
-.prose li::marker { color: var(--accent); }
+.prose li::marker { color: var(--accent-text); }
 .prose ul ul,
 .prose ol ol,
 .prose ul ol,
