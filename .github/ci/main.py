@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import pathlib
 import re
@@ -56,6 +57,11 @@ MODEL = os.getenv("LLM_MODEL") or "gpt-4o-mini"
 BASE_URL = (os.getenv("LLM_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
 API_KEY = os.getenv("LLM_API_KEY") or ""
 MAX_ROUNDS = int(os.getenv("MAX_ROUNDS") or "16")
+# 落盘自检不合格时最多退回重写几次（超过就接受，避免死循环）
+MAX_REWRITE = int(os.getenv("MAX_REWRITE") or "2")
+# 单次输出上限：长文（2000~3000 字）需要足够大的 max_tokens，
+# 不显式设置时会受服务端默认值限制导致文章被截断（表现为「草草收尾、后半段缺失」）
+MAX_TOKENS = int(os.getenv("MAX_TOKENS") or "16384")
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE") or "0.2")
 MAX_429_RETRIES = int(os.getenv("MAX_429_RETRIES") or "5")   # 2/4/8/16/32s
 BASE_BACKOFF = float(os.getenv("BASE_BACKOFF") or "2")       # 首次等待秒数
@@ -788,7 +794,11 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
    修改已有文章时，保留原有的 `source_issue`，并把 `date` 更新为 {TODAY}。
 11. 参考链接放在正文末尾的"参考"小节，只写你实际抓取或确认过的 URL。
 12. 不要写与主题无关的内容，不要在正文里提及 issue、机器人或本流程。
-13. 一次运行只做一种操作、只调用一次写入类工具（save_article / edit_article / delete_article 三选一）。
+13. **不要过早动笔**：Issue 若点名要写多个方面，每个方面都需要先有依据，
+   允许把检索预算用满；"2~3 条证据就够"只适用于主题单一、方面很少的 Issue。
+   落盘后系统会做自检（篇幅 + 逐条覆盖），不合格会把文章退回重写，
+   与其被退回，不如第一次就写全——**宁可长，不可缺**。
+14. 一次运行只做一种操作、只调用一次写入类工具（save_article / edit_article / delete_article 三选一）。
 
 最后必须落盘（或按第 5 条明确说明无权改动），成功后用一句话总结即可。
 
@@ -836,6 +846,106 @@ def existing_article_hint() -> str:
         "绝对不要再用 `save_article` 新增一篇**，否则仓库里会留下重复内容。"
         "若你判断确实需要另开一篇不同主题的文章，也要先说明为什么现有那篇不适用。"
     )
+
+
+# 中文字符 + 英文单词计数，用来衡量正文篇幅
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9._\-]{2,}")
+# 常见英文噪音词，不作为「要点锚点」
+_ANCHOR_STOP = {
+    "the", "and", "for", "with", "that", "this", "from", "not", "are", "you",
+    "was", "how", "why", "code", "bash", "text", "conf", "http", "https",
+    "com", "www", "org", "net", "html", "please", "issue", "github",
+}
+
+
+def article_length(md: str) -> int:
+    """正文字数：汉字数 + 英文单词数（粗略但够用）。"""
+    cn = len(_CJK_CHAR_RE.findall(md or ""))
+    en = len([w for w in _WORD_RE.findall(md or "") if w.lower() not in _ANCHOR_STOP])
+    return cn + en
+
+
+def required_length() -> int:
+    """从 Issue 正文里解析篇幅要求（如「2000~3000 字」），取下限；解析不到用默认值。"""
+    patterns = [
+        re.compile(r"(\d{3,5})\s*[~～\-—至到]\s*(\d{3,5})\s*字"),
+        re.compile(r"(\d{3,5})\s*字\s*(?:以上|以上|左右)?"),
+    ]
+    for pat in patterns:
+        m = pat.search(ISSUE_BODY or "")
+        if m:
+            try:
+                return max(300, int(m.group(1)))
+            except ValueError:
+                pass
+    return 800
+
+
+def issue_checklist() -> list[tuple[str, list[str]]]:
+    """
+    从 Issue 正文里抽出「逐条要求」及每条的锚点词。
+
+    支持 `1. xxx` / `1、xxx` / `1) xxx` / `① xxx` 等编号写法。
+    锚点词优先取英文专有名词（InRelease、autoremove…），中文条目取标题短句。
+    """
+    body = ISSUE_BODY or ""
+    items: list[tuple[str, list[str]]] = []
+    pat = re.compile(
+        r"^\s*(?:\d{1,2}\s*[\.、)．]|[①-⑳])\s*(.+?)\s*$", re.MULTILINE
+    )
+    for m in pat.finditer(body):
+        title = m.group(1).strip()
+        if len(title) < 4:
+            continue
+        # 条目正文可能很长（一段），只取前 200 字抽锚点，标题显示截断
+        title = title[:200]
+        anchors = [
+            w for w in _WORD_RE.findall(title)
+            if w.lower() not in _ANCHOR_STOP and not w.isdigit()
+        ]
+        anchors = sorted(set(anchors), key=len, reverse=True)[:6]
+        if not anchors:
+            # 纯中文条目：取前 10 个汉字做短语锚点
+            cn = "".join(_CJK_CHAR_RE.findall(title))[:10]
+            anchors = [cn] if len(cn) >= 3 else []
+        if anchors:
+            items.append((title[:60], anchors))
+    # 正文条目过多时（>12）多半不是要求清单，忽略
+    return items[:12]
+
+
+def review_article(md: str) -> tuple[bool, str]:
+    """
+    落盘后的自检：篇幅是否达标、Issue 逐条要求是否都写进了正文。
+
+    这是「模型第 3 轮就草草落盘、把用户列的要点砍掉一大半」的兜底：
+    不合格就把结论退回给模型重写，而不是直接结束。
+    """
+    problems: list[str] = []
+
+    n = article_length(md or "")
+    need = required_length()
+    if n < need:
+        problems.append(f"篇幅不足：当前约 {n} 字，要求不少于 {need} 字")
+
+    missing: list[str] = []
+    for title, anchors in issue_checklist():
+        hits = [a for a in anchors if a.lower() in (md or "").lower()]
+        # 锚点少则要求全部命中；锚点多时要求命中 40%（至少 2 个），
+        # 避免「只提到一个名词就宣称覆盖了这一条」。
+        need = len(anchors) if len(anchors) <= 3 else max(2, math.ceil(len(anchors) * 0.4))
+        if len(hits) < need:
+            missing.append(f"{title}（命中 {len(hits)}/{need}）")
+    if missing:
+        problems.append(
+            "以下 Issue 点名要写的方面在正文里找不到对应内容（共 "
+            f"{len(missing)} 条）：\n" + "\n".join(f"  - {t}" for t in missing)
+        )
+
+    if not problems:
+        return True, f"自检通过（约 {n} 字，逐条要求均已覆盖）"
+    return False, "\n".join(problems)
 
 
 def owned_files_hint() -> str:
@@ -941,6 +1051,9 @@ def run_agent() -> None:
 
     # 按 Issue 意图决定「强制落盘」时锁定哪个写入工具
     force_tool = os.getenv("FORCE_TOOL") or guess_intent()
+    # 本 Issue 若已生成过文章，强制落盘时也必须锁定为「修改」，否则会再新增一篇重复的
+    if existing_article_hint() and force_tool == "save_article":
+        force_tool = "edit_article"
     trace(f"意图判定：强制落盘时锁定 {force_tool}")
 
     for round_no in range(1, MAX_ROUNDS + 1):
@@ -987,6 +1100,7 @@ def run_agent() -> None:
                 tools=TOOLS,
                 tool_choice=tc_value,
                 temperature=TEMPERATURE,
+                max_tokens=MAX_TOKENS,
             )
 
         try:
@@ -1083,8 +1197,35 @@ def run_agent() -> None:
                     trace(f"✅ {name} 返回：{cut(out, 1200)}")
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(out)[:20000]})
             if name in WRITE_TOOLS and RESULT:
-                trace(f"第 {round_no} 轮落盘成功，结束循环")
-                return
+                # 落盘后自检：篇幅 + Issue 逐条覆盖，不合格就退回重写
+                md_now = args.get("cn_md") or ""
+                n_rewrite = sum(
+                    1 for m in messages if isinstance(m.get("content"), str)
+                    and m["content"].startswith("❌ 文章未通过自检")
+                )
+                ok, why = review_article(md_now)
+                if ok:
+                    trace(f"✅ 自检通过：{why}")
+                    trace(f"第 {round_no} 轮落盘成功，结束循环")
+                    return
+                if n_rewrite >= MAX_REWRITE:
+                    trace(f"⚠️ 已退回重写 {n_rewrite} 次，仍未完全满足，接受当前结果：{why}")
+                    trace(f"第 {round_no} 轮落盘成功，结束循环")
+                    return
+
+                trace(f"❌ 文章未通过自检（第 {n_rewrite + 1}/{MAX_REWRITE} 次退回重写）：\n{why}")
+                RESULT.clear()
+                out = (
+                    "❌ 文章未通过自检，本次落盘已作废，请重写一篇更完整的：\n"
+                    f"{why}\n\n"
+                    "要求：\n"
+                    "1. 上面列出的每个缺失方面都要补上独立小标题，不许合并、不许略过；\n"
+                    f"2. 正文字数不少于 {required_length()} 字；\n"
+                    "3. 补齐需要的事实时可以继续用 search_web / fetch_url 检索；\n"
+                    "4. 写完后再次调用同一个写入工具提交完整全文（整篇替换，不要只写增量）。"
+                )
+                messages.append({"role": "tool", "tool_call_id": tc.id + "_review", "content": out})
+                break
 
     if not RESULT:
         fail(
