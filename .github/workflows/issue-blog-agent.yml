@@ -114,7 +114,6 @@ jobs:
         id: owned
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
         run: |
           set -uo pipefail
           ACTOR="${ISSUE_AUTHOR:-}"
@@ -140,7 +139,6 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.inputs.issue_number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
-          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
@@ -149,7 +147,15 @@ jobs:
           case "$ATTEMPTS" in ''|*[!0-9]*) ATTEMPTS=3 ;; esac
           [ "$ATTEMPTS" -lt 1 ] && ATTEMPTS=1
 
+          # ISSUE_AUTHOR 由「收集 Issue 内容」步骤写入 GITHUB_ENV，两种触发方式都有。
+          # 这里不能再声明 step 级 env 覆盖它：workflow_dispatch 时
+          # github.event.issue.user.login 为空，会把操作者冲成空串，
+          # 导致 check_changes.py 直接 return 2（"未提供本次操作者"）而误判失败。
           ACTOR="${ISSUE_AUTHOR:-}"
+          if [ -z "$ACTOR" ]; then
+            ACTOR="$(gh issue view "$ISSUE_NUMBER" --json author --jq .author.login 2>/dev/null || true)"
+            echo "::warning::步骤 env 未取到提出者，已按 Issue #$ISSUE_NUMBER 反查：$ACTOR"
+          fi
           echo "本次操作者：$ACTOR"
 
           DIAG="$RUNNER_TEMP/diag.md"
@@ -289,12 +295,29 @@ jobs:
             echo "$ERR"
             echo '```'
             echo
+            echo "### 逐次失败诊断"
+            echo
             if [ -s "$RUNNER_TEMP/diag.md" ]; then
-              echo "### 逐次失败诊断"
-              echo
               cat "$RUNNER_TEMP/diag.md"
-              echo
+            else
+              echo "（诊断文件为空 —— 循环未命中任何已知失败分支，请看下方快照）"
             fi
+            echo
+            echo "<details><summary>工作区与日志快照</summary>"
+            echo
+            echo '```text'
+            echo "## diag.md 大小"
+            wc -c "$RUNNER_TEMP/diag.md" 2>/dev/null || echo "（无 diag.md）"
+            echo "## git status --porcelain"
+            git -c core.quotepath=false status --porcelain || true
+            echo "## changes.json"
+            cat "$RUNNER_TEMP/changes.json" 2>/dev/null || echo "（不存在）"
+            echo "## changes.json 大小"
+            wc -c "$RUNNER_TEMP/changes.json" 2>/dev/null || true
+            echo "## agent.log 尾部 30 行"
+            tail -n 30 "$RUNNER_TEMP/agent.log" 2>/dev/null || echo "（不存在）"
+            echo '```'
+            echo "</details>"
             echo "<details><summary>完整执行轨迹（尾部）</summary>"
             echo
             echo '```text'
@@ -328,7 +351,6 @@ jobs:
           SUMMARY: ${{ steps.agent.outputs.summary }}
           FULL_DIR: ${{ steps.agent.outputs.full_dir }}
           OPERATION: ${{ steps.agent.outputs.operation }}
-          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
