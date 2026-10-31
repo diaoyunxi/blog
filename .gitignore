@@ -7,3 +7,7 @@ venv/
 .vscode/
 *.log
 .env
+
+# 前端构建产物（由 build.mjs 生成，部署到 Cloudflare Pages 的 dist/）
+dist/
+node_modules/

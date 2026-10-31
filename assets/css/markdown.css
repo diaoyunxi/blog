@@ -1,0 +1,162 @@
+/* ============================================================
+   markdown.css — Markdown 正文渲染样式（.prose）
+   用于经 marked 渲染后的文章正文，强调阅读舒适度与编辑感
+   ============================================================ */
+
+.prose {
+  font-family: var(--font-sans);
+  font-size: 1.06rem;
+  line-height: 1.78;
+  color: var(--text);
+  word-wrap: break-word;
+}
+
+/* 标题 —— 衬线，层级清晰 */
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+  margin: 2em 0 0.7em;
+  letter-spacing: -0.01em;
+}
+.prose h1 { font-size: 1.9rem; margin-top: 0.4em; }
+.prose h2 {
+  font-size: 1.55rem;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+.prose h3 { font-size: 1.28rem; }
+.prose h4 { font-size: 1.1rem; }
+.prose h5 { font-size: 1rem; }
+.prose h6 { font-size: 0.92rem; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.prose > :first-child { margin-top: 0; }
+
+.prose p { margin: 1.1em 0; }
+
+/* 行内代码 */
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.12em 0.4em;
+  color: var(--accent-hover);
+}
+
+/* 代码块 */
+.prose pre {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  overflow-x: auto;
+  margin: 1.4em 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  box-shadow: var(--shadow-sm);
+}
+.prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: 0.9rem;
+}
+.prose pre code::before,
+.prose pre code::after { content: none; }
+
+/* 链接 */
+.prose a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  transition: border-color var(--t-fast);
+}
+.prose a:hover {
+  color: var(--accent-hover);
+  border-bottom-color: var(--accent-hover);
+}
+
+/* 引用 */
+.prose blockquote {
+  margin: 1.4em 0;
+  padding: 0.4em 1.2em;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-2);
+}
+.prose blockquote p { margin: 0.6em 0; }
+.prose blockquote cite { display: block; margin-top: 0.4em; font-size: 0.85rem; color: var(--text-3); }
+
+/* 列表 */
+.prose ul,
+.prose ol { margin: 1.1em 0; padding-left: 1.5em; }
+.prose li { margin: 0.4em 0; }
+.prose li::marker { color: var(--accent); }
+.prose ul ul,
+.prose ol ol,
+.prose ul ol,
+.prose ol ul { margin: 0.4em 0; }
+
+/* 表格 */
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.6em 0;
+  font-size: 0.95rem;
+  display: block;
+  overflow-x: auto;
+}
+.prose th,
+.prose td {
+  border: 1px solid var(--border);
+  padding: 0.6em 0.9em;
+  text-align: left;
+}
+.prose thead th {
+  background: var(--surface-2);
+  font-weight: 600;
+  color: var(--text);
+}
+.prose tbody tr:nth-child(even) { background: var(--surface-2); }
+
+/* 分隔线 */
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2.4em 0;
+}
+
+/* 图片 */
+.prose img {
+  border-radius: var(--radius-md);
+  margin: 1.4em 0;
+  box-shadow: var(--shadow-sm);
+}
+
+/* 强调 */
+.prose strong { font-weight: 700; color: var(--text); }
+.prose em { font-style: italic; }
+
+/* 数学公式（KaTeX） */
+.prose .katex-display {
+  margin: 1.4em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--space-2) 0;
+}
+
+/* 脚注 */
+.prose sup a { border-bottom: none; }
+
+/* 暗色下代码块微调 */
+[data-theme="dark"] .prose pre { border: 1px solid var(--border); }
