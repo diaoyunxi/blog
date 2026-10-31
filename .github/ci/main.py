@@ -755,6 +755,44 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
 
 不确定时默认按「新增」处理；只有 Issue 明确点名要改或要删某篇时才用后两者。
 
+## 重要：Issue 很短时必须自己把深度补齐
+
+真实用户开 Issue 往往只有一句话，例如「介绍一下 https://github.com/xxx/yyy」、
+「完整介绍一下 apt 的原理」——**不会给你列详细提纲**。
+这时绝不能因为 Issue 短就写成一篇几百字的概览。你要把它当成一次约稿：
+用户没说清楚的部分，由你按下面标准补全。
+
+**判断与补全流程：**
+
+1. 先判断主题类型（介绍某个东西 / 讲清某个原理 / 某个操作怎么做），再套用对应框架；
+2. 框架里的每一条都写成独立小标题，不要合并成一段；
+3. 拿不准有没有的维度（比如"安全注意"），检索后确认，确实不适用就在文中一句带过，不要整条消失；
+4. 篇幅按 1500~2500 字写，主题复杂（如「原理」「架构」）可以写到 3000 字。
+
+**框架 A —— 介绍某个项目 / 工具 / 仓库（Issue 给了链接或名字时用它）：**
+   1. 背景：它解决什么问题、什么场景下会用到
+   2. 定位与对比：和同类方案的本质区别（各自适合什么场景），不要只写优点
+   3. 快速上手：最短路径跑起来的完整命令 / 代码（可直接复制）
+   4. 组成与原理：核心模块 / 目录结构 / 关键文件分别负责什么，数据流怎么走
+   5. 关键配置：常用参数、默认值、怎么改
+   6. 安全与隐私：密钥如何管理、数据会传到哪里、需要收敛的风险
+   7. 局限与坑：什么情况下不适用、常见报错与排查
+   8. 选型建议：什么时候该用它，什么时候该换别的
+   9. 参考链接
+
+**框架 B —— 讲清某个原理 / 机制（Issue 出现"原理""是怎么工作的""背后发生了什么"时用它）：**
+   1. 背景：为什么需要它，没有它的时候人们怎么做
+   2. 定位与分层：它在整个体系里处于哪一层，上下游分别是谁、各自负责什么
+   3. 核心流程：一次完整调用 / 一条命令背后发生了什么，按阶段拆开讲，每阶段给可验证的命令
+   4. 关键数据与状态：它依赖哪些配置文件、目录、状态文件，里面存了什么
+   5. 关键机制：涉及的核心算法 / 策略 / 优先级规则要讲清楚
+   6. 常见坑与排查：报错信息 → 原因 → 解决办法
+   7. 最佳实践：什么该做、什么不该做，给出可直接复制的命令
+   8. 参考链接
+
+两个框架可以按主题混合使用（例如「介绍 X 的原理」就 A+B 合并），
+但**每个维度都不能空着**。
+
 ## 硬性要求
 
 1. 博客根目录：{BLOG_DIR_NAME}/（仓库根目录下）。先检查 list_blog_tree 给出的既有分类：
@@ -781,8 +819,8 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
    检索配额用尽或轮数过半时，系统会强制你落盘，此时必须基于已有信息直接完成改动。
 7. 结构建议：背景 → 核心概念/原理 → 实操步骤或示例（带代码/命令块）→ 常见坑 → 小结 → 参考链接。
    Markdown 规范，代码块标注语言。
-   篇幅默认 800~1500 字；**若 Issue 正文明确要求更长篇幅、或点名要写多个方面，以 Issue 为准**（上限 3000 字）。
-   绝不许为了压缩篇幅丢掉 Issue 点名要写的内容——宁可长，不可缺。
+   篇幅**默认 1500~2500 字**；若 Issue 正文明确要求更长篇幅，以 Issue 为准（上限 3000 字）。
+   绝不许为了压缩篇幅丢掉该写的内容——宁可长，不可缺。
 8. **逐条覆盖（硬性）**：Issue 正文里若出现编号清单、"请覆盖以下几点"、分条要求，
    文章必须**逐条对应**，每条用独立小标题或独立小节写清楚，不许合并、不许略过、不许只挑自己会写的写。
    写完后自查一遍 Issue 的每一条是否都落到了正文里，缺哪条就补哪条。
@@ -873,6 +911,45 @@ def article_length(md: str) -> int:
     return cn + en
 
 
+# 无编号清单时的「通用框架维度」——用于短 Issue 的结构兜底，
+# 每个维度给若干锚点，命中任一即视为该维度已覆盖。
+FRAMEWORK_DIMENSIONS: list[tuple[str, tuple[str, ...]]] = [
+    ("背景/定位对比", ("对比", "区别", "与", "不同于", "相比", "定位", "背景", "为什么", "区别在")),
+    ("快速上手/实操命令", ("安装", "命令", "npm ", "apt ", "git ", "curl", "示例", "```", "用法", "运行")),
+    ("组成/原理/流程", ("原理", "流程", "结构", "模块", "目录", "链路", "阶段", "机制", "架构", "解析")),
+    ("关键配置/参数", ("配置", "参数", "默认值", "选项", "文件", "环境变量")),
+    ("局限/坑/排查", ("局限", "坑", "注意", "报错", "排查", "风险", "不适", "问题", "失败")),
+    ("小结/选型", ("小结", "总结", "选型", "建议", "什么时候", "该用", "适合")),
+    ("参考链接", ("## 参考", "http://", "https://")),
+]
+
+
+def framework_check(md: str) -> list[str]:
+    """短 Issue（无编号清单）时的结构兜底：按通用框架维度检查小标题与内容。"""
+    text = md or ""
+    headings = "\n".join(
+        l for l in text.split("\n") if l.lstrip().startswith("#")
+    )
+    haystack = (headings + "\n" + text).lower()
+    missing: list[str] = []
+    for name, anchors in FRAMEWORK_DIMENSIONS:
+        if not any(a.lower() in haystack for a in anchors):
+            missing.append(name)
+
+    n_headings = len([l for l in text.split("\n") if l.lstrip().startswith("##")])
+    problems: list[str] = []
+    if missing:
+        problems.append(
+            "文章缺少以下通用维度（短 Issue 也必须有，一条都不许空）：\n"
+            + "\n".join(f"  - {m}" for m in missing)
+        )
+    if n_headings < 6:
+        problems.append(
+            f"结构太薄：只有 {n_headings} 个二级/三级小标题，短 Issue 至少要 6 个小标题把各维度分开写"
+        )
+    return problems
+
+
 def required_length() -> int:
     """从 Issue 正文里解析篇幅要求（如「2000~3000 字」），取下限；解析不到用默认值。"""
     patterns = [
@@ -886,7 +963,9 @@ def required_length() -> int:
                 return max(300, int(m.group(1)))
             except ValueError:
                 pass
-    return 800
+    # Issue 没写篇幅要求时：真实用户的 Issue 往往只有一句话，
+    # 这时按「有深度的技术文章」给下限，而不是旧的 800 字概览档。
+    return 1500
 
 
 def issue_checklist() -> list[tuple[str, list[str]]]:
@@ -936,19 +1015,25 @@ def review_article(md: str) -> tuple[bool, str]:
     if n < need:
         problems.append(f"篇幅不足：当前约 {n} 字，要求不少于 {need} 字")
 
-    missing: list[str] = []
-    for title, anchors in issue_checklist():
-        hits = [a for a in anchors if a.lower() in (md or "").lower()]
-        # 锚点少则要求全部命中；锚点多时要求命中 40%（至少 2 个），
-        # 避免「只提到一个名词就宣称覆盖了这一条」。
-        need = len(anchors) if len(anchors) <= 3 else max(2, math.ceil(len(anchors) * 0.4))
-        if len(hits) < need:
-            missing.append(f"{title}（命中 {len(hits)}/{need}）")
-    if missing:
-        problems.append(
-            "以下 Issue 点名要写的方面在正文里找不到对应内容（共 "
-            f"{len(missing)} 条）：\n" + "\n".join(f"  - {t}" for t in missing)
-        )
+    checklist = issue_checklist()
+    if checklist:
+        # Issue 自带编号清单 → 逐条核对
+        missing: list[str] = []
+        for title, anchors in checklist:
+            hits = [a for a in anchors if a.lower() in (md or "").lower()]
+            # 锚点少则要求全部命中；锚点多时要求命中 40%（至少 2 个），
+            # 避免「只提到一个名词就宣称覆盖了这一条」。
+            need = len(anchors) if len(anchors) <= 3 else max(2, math.ceil(len(anchors) * 0.4))
+            if len(hits) < need:
+                missing.append(f"{title}（命中 {len(hits)}/{need}）")
+        if missing:
+            problems.append(
+                "以下 Issue 点名要写的方面在正文里找不到对应内容（共 "
+                f"{len(missing)} 条）：\n" + "\n".join(f"  - {t}" for t in missing)
+            )
+    else:
+        # Issue 只有一句话、没有清单 → 按通用框架检查结构是否够完整
+        problems.extend(framework_check(md))
 
     if not problems:
         return True, f"自检通过（约 {n} 字，逐条要求均已覆盖）"
