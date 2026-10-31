@@ -35,6 +35,7 @@ npm 包 `page-agent@1.8.0` 的 `package.json` 中：
   "exports": {
     ".": {
       "import": "./dist/esm/page-agent.js",
+      "default": "./dist/esm/page-agent.js",
       "types": "./dist/esm/PageAgent.d.ts"
     }
   }
@@ -182,6 +183,7 @@ page-agent 采用**纯文本 DOM 解析**，不截图、不依赖多模态模型
 ## 参考
 
 - GitHub 仓库：https://github.com/alibaba/page-agent
-- 官方文档：https://alibaba.github.io/page-agent/
-- npm 包：https://www.npmjs.com/package/page-agent
-- IIFE demo 脚本：https://cdn.jsdelivr.net/npm/page-agent@1.8.0/dist/iife/page-agent.demo.js
+- 官方文档站：https://alibaba.github.io/page-agent/
+- npm 包页面：https://www.npmjs.com/package/page-agent
+- IIFE demo 脚本（1.8.0）：https://cdn.jsdelivr.net/npm/page-agent@1.8.0/dist/iife/page-agent.demo.js
+- 国内镜像（1.8.0）：https://registry.npmmirror.com/page-agent/1.8.0/files/dist/iife/page-agent.demo.js
