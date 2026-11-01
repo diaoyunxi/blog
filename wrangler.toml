@@ -3,7 +3,6 @@
 # Pages 控制台设置；此处用 wrangler.toml 固化配置，便于复现与本地预览。
 
 name = "diaoyunxi-blog"
-pages_build_command = "node build.mjs"
 pages_build_output_dir = "dist"
 compatibility_date = "2024-09-23"
 
