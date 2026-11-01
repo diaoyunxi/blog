@@ -178,7 +178,12 @@ SEG_DANGLING_PREFIXES = ("与", "和", "及", "或", "的", "之", "在", "对",
 
 
 def blog_tree(max_depth: int = 3, max_entries: int = 400) -> str:
-    """列出博客目录结构，供模型判断分类。"""
+    """
+    列出博客目录结构，供模型判断分类。
+
+    带「← 已有文章」标记的目录本身已经是一篇文章（里面有 cn.md），
+    不是空分类——模型必须据此判断新文章该「挂到它下面」还是「与它并列」。
+    """
     if not BLOG_ROOT.exists():
         return f"({BLOG_DIR_NAME}/ 目录尚不存在，需要你自行创建分类目录)"
     lines: list[str] = []
@@ -201,7 +206,10 @@ def blog_tree(max_depth: int = 3, max_entries: int = 400) -> str:
             count += 1
             rel = p.relative_to(BLOG_ROOT).as_posix()
             if p.is_dir():
-                lines.append(f"{'  ' * depth}{rel}/")
+                # 标出「这个目录本身已经是一篇文章」，避免模型把它当成空分类继续套娃
+                has_article = (p / "cn.md").is_file() or (p / "en.md").is_file()
+                suffix = "  ← 已有文章" if has_article else ""
+                lines.append(f"{'  ' * depth}{rel}/{suffix}")
                 walk(p, depth + 1)
             else:
                 lines.append(f"{'  ' * depth}{rel}")
@@ -551,7 +559,7 @@ def _check_inside_blog(path: pathlib.Path, raw: str) -> pathlib.Path:
 
 def finish(rel_file: str, operation: str, summary: str = "") -> str:
     """统一收尾：写入 RESULT，供 workflow 生成 commit / 回帖。"""
-    verb = {"add": "add", "update": "update", "remove": "remove"}.get(operation, "add")
+    verb = {"add": "add", "update": "update", "remove": "remove", "move": "move"}.get(operation, "add")
     rel_dir = rel_file.rsplit("/", 1)[0] if "/" in rel_file else ""
     RESULT.update(
         {
@@ -602,6 +610,85 @@ def edit_article(target_file: str, cn_md: str, summary: str = "") -> str:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(cn_md.strip() + "\n", encoding="utf-8")
     return finish(rel, "update", summary)
+
+
+def move_article(src_file: str, dst_file: str, summary: str = "") -> str:
+    """
+    【移动文章】把一个 .md 下沉到它自己目录下的子目录里。
+
+    用途：当一篇新文章与已有某篇文章是「并列」关系时，需要先把那篇已有文章
+    下沉成独立子目录，再让新文章另开一个子目录，两者互不干扰。
+    例：开源智能体/cn.md  ->  开源智能体/Cindy/cn.md
+
+    安全约束（硬性）：只允许「下沉」——目标目录必须是源目录本身或其子目录，
+    不允许横移到别的分类、也不允许上移。这样移动不会侵犯其他分类的结构。
+    """
+    src_rel = sanitize_rel_file(src_file)
+    dst_rel = sanitize_rel_file(dst_file)
+    src = _check_inside_blog(BLOG_ROOT / src_rel, src_file)
+    dst = _check_inside_blog(BLOG_ROOT / dst_rel, dst_file)
+
+    if not src.is_file():
+        return json.dumps(
+            {"ok": False, "error": f"源文件不存在，无法移动：{BLOG_DIR_NAME}/{src_rel}"},
+            ensure_ascii=False,
+        )
+    if dst.exists():
+        return json.dumps(
+            {"ok": False, "error": f"目标文件已存在，未覆盖：{BLOG_DIR_NAME}/{dst_rel}"},
+            ensure_ascii=False,
+        )
+
+    # 只允许下沉：dst 的父目录 == src 的父目录，或在它下面
+    if src.parent != dst.parent and src.parent not in dst.parents:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": (
+                    f"只允许把文章下沉到它自己目录的子目录里："
+                    f"源目录 {BLOG_DIR_NAME}/{src_rel.rsplit('/', 1)[0] if '/' in src_rel else ''} "
+                    f"→ 目标目录 {BLOG_DIR_NAME}/{dst_rel.rsplit('/', 1)[0]}"
+                    "。若你想让它进入别的分类，请改用 save_article 另写一篇，不要移动。"
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    src.unlink()
+
+    # 顺带清理因此变空的目录（不越过 blog 根）
+    d = src.parent
+    while d != BLOG_ROOT and d.is_dir() and not any(d.iterdir()):
+        d.rmdir()
+        d = d.parent
+
+    log(f"已移动 {src_rel} -> {dst_rel}")
+    # 不终止本轮：并列场景下模型还要接着 save_article 写新文章
+    RESULT.update(
+        {
+            "operation": "move",
+            "target_file": dst_rel,
+            "target_dir": dst_rel.rsplit("/", 1)[0] if "/" in dst_rel else "",
+            "cn_path": f"{BLOG_DIR_NAME}/{dst_rel}",
+            "full_dir": f"{BLOG_DIR_NAME}/{dst_rel.rsplit('/', 1)[0]}" if "/" in dst_rel else BLOG_DIR_NAME,
+            "branch": sanitize_branch(dst_rel.rsplit("/", 1)[0] if "/" in dst_rel else ""),
+            "title": f"docs({BLOG_DIR_NAME}): move {dst_rel}",
+            "summary": summary or f"移动 {src_rel} 到 {dst_rel}",
+            "moved_from": src_rel,
+        }
+    )
+    return json.dumps(
+        {
+            "ok": True,
+            "operation": "move",
+            "from": f"{BLOG_DIR_NAME}/{src_rel}",
+            "file": f"{BLOG_DIR_NAME}/{dst_rel}",
+            "note": "移动完成。若本次还要新增并列的新文章，请继续调用 save_article 写到同级子目录。",
+        },
+        ensure_ascii=False,
+    )
 
 
 def delete_article(target_file: str, summary: str = "") -> str:
@@ -729,6 +816,22 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "move_article",
+            "description": "【移动文章】把一篇已有 .md 下沉到它自己目录下的子目录里。仅用于「新文章与已有文章并列」时给两篇各自腾出子目录；只能下沉，不能横移到别的分类。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "src_file": {"type": "string", "description": "源文件相对博客根目录的路径，如 人工智能/智能体应用/开源智能体/cn.md"},
+                    "dst_file": {"type": "string", "description": "目标路径，必须在源目录的子目录下，如 人工智能/智能体应用/开源智能体/Cindy/cn.md"},
+                    "summary": {"type": "string", "description": "一句话说明为何移动"},
+                },
+                "required": ["src_file", "dst_file"],
+            },
+        },
+    },
 ]
 
 WRITE_TOOLS = ("save_article", "edit_article", "delete_article")
@@ -746,6 +849,9 @@ TOOL_FUNCS = {
     ),
     "delete_article": lambda **kw: delete_article(
         kw.get("target_file", ""), kw.get("summary", "")
+    ),
+    "move_article": lambda **kw: move_article(
+        kw.get("src_file", ""), kw.get("dst_file", ""), kw.get("summary", "")
     ),
 }
 
@@ -817,6 +923,28 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
 两个框架可以按主题混合使用（例如「介绍 X 的原理」就 A+B 合并），
 但**每个维度都不能空着**。
 
+## 目录层级规则（重要）：新文章碰到已有文章目录时怎么放
+
+`list_blog_tree` 里带「← 已有文章」标记的目录，**本身已经是一篇文章**（里面有 cn.md），
+不是空分类。落盘前必须先看清目标位置有没有这个标记，然后判断新文章与它的关系：
+
+**关系一：细分（新内容是已有文章的深入展开 / 某一个具体方面）→ 直接挂成子目录**
+   例：已有 `系统工具/包管理器/进阶包工具原理/cn.md`（apt 综述，带已有文章标记），
+       新主题是「apt 的依赖解析算法」→ 写到 `系统工具/包管理器/进阶包工具原理/依赖解析/cn.md`
+   这是**允许的嵌套**：父目录既保留自己的 cn.md，又挂子文章。
+
+**关系二：并列（新内容与已有文章是同级、互相独立的两篇）→ 先下沉旧的，再各自成子目录**
+   例：已有 `人工智能/智能体应用/开源智能体/cn.md`（介绍 A 项目），
+       新主题是介绍同类的 B 项目（与 A 并列，不是 A 的细分）→ 分两步：
+       ① 先 `move_article` 把 `开源智能体/cn.md` 下沉到 `开源智能体/A项目/cn.md`
+       ② 再 `save_article` 把新文章写到 `开源智能体/B项目/cn.md`
+   结果：`开源智能体` 变成纯分类，A、B 各自在自己的子目录里，互不干扰。
+   注意：`move_article` **只能下沉**（目标必须在源目录的子目录里），不能横移到别的分类；
+   必须先 move 再 save，两步都在本次运行里完成。
+
+不确定是细分还是并列时：问自己「读者会不会把新文章当成那一篇的某一节？」
+会 → 细分；不会（两篇可以独立存在、互相引用）→ 并列。
+
 ## 硬性要求
 
 1. 博客根目录：{BLOG_DIR_NAME}/（仓库根目录下）。先检查 list_blog_tree 给出的既有分类：
@@ -876,7 +1004,9 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
    允许把检索预算用满；"2~3 条证据就够"只适用于主题单一、方面很少的 Issue。
    落盘后系统会做自检（篇幅 + 逐条覆盖），不合格会把文章退回重写，
    与其被退回，不如第一次就写全——**宁可长，不可缺**。
-14. 一次运行只做一种操作、只调用一次写入类工具（save_article / edit_article / delete_article 三选一）。
+14. 一次运行只做一种「产出」操作、只调用一次 save_article / edit_article / delete_article 三选一。
+   唯一例外：`move_article` 是结构整理，不算产出，**并列场景下必须 move + save 两步连做**
+   （先下沉已有文章，再写新文章），两者会在同一次提交里一起落盘。
 
 最后必须落盘（或按第 5 条明确说明无权改动），成功后用一句话总结即可。
 
@@ -1379,7 +1509,7 @@ def write_summary() -> None:
     path = os.getenv("GITHUB_STEP_SUMMARY")
     if not path:
         return
-    op_cn = {"add": "新增", "update": "修改", "remove": "删除"}.get(RESULT.get("operation", ""), "改动")
+    op_cn = {"add": "新增", "update": "修改", "remove": "删除", "move": "移动"}.get(RESULT.get("operation", ""), "改动")
     with open(path, "a", encoding="utf-8") as f:
         f.write(
             "### 🤖 Issue → 中文博客\n\n"
