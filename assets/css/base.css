@@ -802,3 +802,151 @@ a:hover { color: var(--accent-hover); }
   .post-nav { grid-template-columns: 1fr; }
   .post-nav__item--next { text-align: left; }
 }
+
+/* ============================================================
+   目录树视图（tree）—— 首页按 blog/ 的真实目录层级展示
+   ============================================================ */
+.tree-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+.tree,
+.tree__children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tree__children { margin-left: 18px; border-left: 1px dashed var(--border); padding-left: 10px; }
+.tree__item { margin: 1px 0; }
+
+.tree__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 38px;
+  padding: 2px 8px 2px 2px;
+  border-radius: var(--radius-md);
+  transition: background var(--t-fast);
+}
+.tree__row:hover { background: var(--surface-2); }
+
+.tree__toggle {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.tree__toggle:hover { color: var(--accent-text); background: var(--surface-3); }
+.tree__toggle--leaf { cursor: default; }
+.tree__chev { width: 13px; height: 13px; transition: transform var(--t-fast); }
+.tree__toggle[aria-expanded="true"] .tree__chev { transform: rotate(90deg); }
+
+.tree__icon {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  color: var(--text-3);
+}
+.tree__row--post .tree__icon { color: var(--accent); }
+
+.tree__name {
+  flex: 0 1 auto;
+  font-weight: 600;
+  font-size: 0.94rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.tree__post {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.9rem;
+  color: var(--text-2);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree__post:hover { color: var(--accent-text); text-decoration: underline; }
+
+.tree__date {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.tree__enter {
+  flex: 0 0 auto;
+  font-family: inherit;
+  font-size: 0.76rem;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--t-fast);
+  white-space: nowrap;
+}
+.tree__enter:hover { border-color: var(--accent); color: var(--accent-text); }
+
+.tree__count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 移动端：收紧缩进，日期与「进入」按钮让位 */
+@media (max-width: 640px) {
+  .tree-wrap { padding: var(--space-2); border-radius: var(--radius-md); }
+  .tree__children { margin-left: 10px; padding-left: 8px; }
+  .tree__row { gap: var(--space-1); min-height: 34px; padding-right: 2px; }
+  .tree__date { display: none; }
+  .tree__name { font-size: 0.88rem; white-space: normal; }
+  .tree__post { font-size: 0.84rem; white-space: normal; }
+  .tree__enter { padding: 2px 7px; font-size: 0.72rem; }
+}
+
+/* ---------- 目录路径（面包屑） ---------- */
+.crumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0 0 var(--space-4);
+  font-size: 0.88rem;
+  color: var(--text-3);
+}
+.crumb__item {
+  font-family: inherit;
+  font-size: inherit;
+  border: 0;
+  background: none;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+a.crumb__item { text-decoration: none; }
+.crumb__item:hover { color: var(--accent-text); background: var(--surface-2); }
+.crumb__item.is-current { color: var(--text); font-weight: 600; cursor: default; }
+.crumb__item.is-current:hover { background: none; }
+.crumb__sep { color: var(--text-3); opacity: 0.55; }
