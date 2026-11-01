@@ -89,6 +89,57 @@ function buildPosts() {
   return posts;
 }
 
+/* ---------- 生成目录树 ----------
+   树结构与 blog/ 下的真实目录一一对应：
+     - 目录里直接有 cn.md/en.md → 该节点本身也是一篇文章（node.post 非空）
+     - 目录里还有子目录 → 该节点同时是「分类」和「文章」
+       （细分型子文章就挂在它下面，这是允许的嵌套）
+   前端据此渲染 tree 视图。 */
+function buildTree(posts) {
+  const index = Object.create(null);
+  const root = { name: "", path: "", post: null, children: [], count: 0 };
+  index[""] = root;
+
+  for (const p of posts) {
+    const segs = p.slug.split("/").filter(Boolean);
+    let parentPath = "";
+    let node = root;
+    for (let i = 0; i < segs.length; i++) {
+      const path = segs.slice(0, i + 1).join("/");
+      if (!index[path]) {
+        node = { name: segs[i], path, post: null, children: [], count: 0 };
+        index[path] = node;
+        index[parentPath].children.push(node);
+      } else {
+        node = index[path];
+      }
+      parentPath = path;
+    }
+    node.post = p;
+  }
+
+  // 统计每棵子树下的文章数
+  (function countAll(n) {
+    let c = n.post ? 1 : 0;
+    for (const ch of n.children) c += countAll(ch);
+    n.count = c;
+    return c;
+  })(root);
+
+  // 排序：先按是否有子目录（纯文章节点靠前），再按名称
+  (function sortAll(n) {
+    n.children.sort((a, b) => {
+      const af = a.children.length ? 1 : 0;
+      const bf = b.children.length ? 1 : 0;
+      if (af !== bf) return af - bf;
+      return a.name.localeCompare(b.name, "zh-Hans-CN");
+    });
+    n.children.forEach(sortAll);
+  })(root);
+
+  return root.children;
+}
+
 /* ---------- 生成 RSS ---------- */
 function buildRss(posts) {
   const items = posts.map((p) => {
@@ -158,8 +209,13 @@ function copyDir(src, dest) {
 /* ---------- 主流程 ---------- */
 function main() {
   const posts = buildPosts();
+  const tree = buildTree(posts);
   copyToDist();
-  writeFileSync(join(DIST, "posts.json"), JSON.stringify({ generated: new Date().toISOString(), count: posts.length, posts }, null, 2), "utf8");
+  writeFileSync(
+    join(DIST, "posts.json"),
+    JSON.stringify({ generated: new Date().toISOString(), count: posts.length, tree, posts }, null, 2),
+    "utf8"
+  );
   writeFileSync(join(DIST, "rss.xml"), buildRss(posts), "utf8");
   writeFileSync(join(DIST, "sitemap.xml"), buildSitemap(posts), "utf8");
   // robots
