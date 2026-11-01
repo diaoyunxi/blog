@@ -54,6 +54,12 @@ def log(msg: str) -> None:
     print(f"[ownership] {msg}", flush=True)
 
 
+def posix_dirname(path: str) -> str:
+    """取 POSIX 路径的目录部分（末尾不带 /）。"""
+    p = (path or "").replace("\\", "/")
+    return p.rsplit("/", 1)[0] if "/" in p else ""
+
+
 def emit(name: str, value: str) -> None:
     """写入 $GITHUB_OUTPUT，支持多行值。"""
     out = os.environ.get("GITHUB_OUTPUT")
@@ -346,6 +352,17 @@ def cmd_check(args) -> int:
             lookup = path
         if not path:
             continue
+
+        # 结构整理豁免：「下沉」式移动（把文章移到它自己目录下的子目录）
+        # 只改位置不改内容，也不跨分类，因此不做归属校验。
+        # 场景：新文章与已有文章并列时，需要先把旧文章下沉成独立子目录。
+        if raw_status.startswith("r") and item.get("previous_filename"):
+            old_dir = posix_dirname(item["previous_filename"])
+            new_dir = posix_dirname(path)
+            if old_dir and (new_dir == old_dir or new_dir.startswith(old_dir + "/")):
+                log(f"↳ {item['previous_filename']} → {path}（目录内下沉，属结构整理，放行）")
+                added.append(path)
+                continue
 
         if raw_status.startswith("a"):
             added.append(path)
