@@ -39,6 +39,9 @@
         prev: "上一篇",
         next: "下一篇",
         minutes: "分钟",
+        treeTitle: "目录",
+        browseTree: "按目录浏览",
+        enterFolder: "只看这个目录",
       },
       en: {
         heroEyebrow: "ISSUE-DRIVEN AI BILINGUAL BLOG",
@@ -65,6 +68,9 @@
         prev: "Previous",
         next: "Next",
         minutes: " min read",
+        treeTitle: "Directory",
+        browseTree: "Browse by folder",
+        enterFolder: "Only this folder",
       },
     },
   };
@@ -79,7 +85,9 @@
         ? "dark"
         : "light"),
     query: "",
+    // 目录树聚焦路径（对应 blog/ 下的真实目录路径，如 "系统工具/包管理器"）
     category: "",
+    tree: [],
     tocObserver: null,
   };
 
@@ -118,7 +126,7 @@
     var m = path.match(/^\/post\/(.+?)\/?$/);
     if (m) return { view: "post", slug: m[1] };
     var params = new URLSearchParams(location.search);
-    return { view: "home", q: params.get("q") || "", cat: params.get("cat") || "" };
+    return { view: "home", q: params.get("q") || "", cat: normPath(params.get("cat") || "") };
   }
   function navigate(url, replace) {
     if (replace) history.replaceState(null, "", url);
@@ -311,7 +319,11 @@
   function loadPosts() {
     return fetch(CONFIG.postsUrl + "?t=" + Date.now())
       .then(function (r) { return r.ok ? r.json() : { posts: [] }; })
-      .then(function (data) { state.posts = data.posts || []; return state.posts; });
+      .then(function (data) {
+        state.posts = data.posts || [];
+        state.tree = data.tree || [];
+        return state.posts;
+      });
   }
 
   /* ---------- 筛选 ---------- */
@@ -323,30 +335,117 @@
     return hay.indexOf(q) !== -1;
   }
 
+  // 分类筛选改为「目录前缀」匹配：选中某目录就只看它（含全部子目录）下的文章
+  function normPath(s) { return String(s || "").replace(/\s*\/\s*/g, "/").replace(/^\/|\/$/g, ""); }
+  function inPath(p, prefix) {
+    if (!prefix) return true;
+    return p.slug === prefix || p.slug.indexOf(prefix + "/") === 0;
+  }
   function filteredPosts() {
     var q = normalized(state.query.trim());
+    var prefix = normPath(state.category);
     return state.posts
       .filter(function (p) {
-        if (state.category && p.category !== state.category) return false;
+        if (!inPath(p, prefix)) return false;
         return queryMatches(p, q);
       })
       .sort(byDateDesc);
   }
 
-  function allCategories() {
-    var map = {};
-    state.posts.forEach(function (p) {
-      if (!p.category) return;
-      map[p.category] = (map[p.category] || 0) + 1;
-    });
-    return Object.keys(map).sort();
+  function findNode(nodes, path) {
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].path === path) return nodes[i];
+      var r = findNode(nodes[i].children || [], path);
+      if (r) return r;
+    }
+    return null;
   }
 
-  /* ---------- 渲染：首页 ---------- */
+  /* ---------- 渲染：目录树 ---------- */
+  var ICON_FOLDER =
+    '<svg class="tree__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2a2 2 0 0 1 1.5.7l1 1.1H18.5A2.5 2.5 0 0 1 21 9.3v7.2a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9z"/></svg>';
+  var ICON_FILE =
+    '<svg class="tree__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3.5H7.5A2 2 0 0 0 5.5 5.5v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8.5z"/><path d="M14 3.5v5h5"/></svg>';
+  var ICON_CHEV =
+    '<svg class="tree__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+
+  function renderTree(nodes, depth, focusPath) {
+    var html = '<ul class="tree' + (depth === 0 ? " tree--root" : "") + '">';
+    nodes.forEach(function (n) {
+      var kids = n.children || [];
+      var hasKids = kids.length > 0;
+      // 聚焦路径上的祖先节点默认展开
+      var open =
+        depth < 1 ||
+        !focusPath ||
+        (focusPath + "/").indexOf(n.path + "/") === 0 ||
+        (n.path + "/").indexOf(focusPath + "/") === 0;
+
+      html += '<li class="tree__item">';
+      html += '<div class="tree__row' + (n.post ? " tree__row--post" : "") + '">';
+
+      if (hasKids) {
+        html +=
+          '<button type="button" class="tree__toggle" data-toggle="' + esc(n.path) +
+          '" aria-expanded="' + (open ? "true" : "false") +
+          '" aria-label="' + esc(n.name) + '">' + ICON_CHEV + "</button>";
+      } else {
+        html += '<span class="tree__toggle tree__toggle--leaf" aria-hidden="true"></span>';
+      }
+
+      html += n.post ? ICON_FILE : ICON_FOLDER;
+      html += '<span class="tree__name">' + esc(n.name) + "</span>";
+
+      if (n.post) {
+        html +=
+          '<a class="tree__post" href="' + postUrl(n.post.slug) + '">' +
+          esc(n.post.title) + "</a>";
+        html += '<span class="tree__date">' + esc(fmtDate(n.post.date)) + "</span>";
+      }
+      if (hasKids) {
+        html +=
+          '<button type="button" class="tree__enter" data-cat="' + esc(n.path) +
+          '" title="只看这个目录下的文章">进入 →</button>';
+      }
+      html += '<span class="tree__count">' + (n.count || 0) + "</span>";
+      html += "</div>";
+
+      if (hasKids) {
+        html +=
+          '<div class="tree__children"' + (open ? "" : " hidden") + ">" +
+          renderTree(kids, depth + 1, focusPath) +
+          "</div>";
+      }
+      html += "</li>";
+    });
+    html += "</ul>";
+    return html;
+  }
+
+  function renderBreadcrumb() {
+    var prefix = normPath(state.category);
+    if (!prefix) return "";
+    var segs = prefix.split("/");
+    var html = '<nav class="crumb" aria-label="目录路径">';
+    html += '<button type="button" class="crumb__item" data-cat="">全部</button>';
+    var acc = "";
+    segs.forEach(function (s, i) {
+      acc = acc ? acc + "/" + s : s;
+      html += '<span class="crumb__sep">/</span>';
+      html +=
+        '<button type="button" class="crumb__item' + (i === segs.length - 1 ? " is-current" : "") +
+        '" data-cat="' + esc(acc) + '">' + esc(s) + "</button>";
+    });
+    html += "</nav>";
+    return html;
+  }
+
+  /* ---------- 渲染：首页（目录树视图） ---------- */
   function renderHome() {
     var L = t;
     var posts = filteredPosts();
-    var cats = allCategories();
+    var prefix = normPath(state.category);
+    var q = state.query.trim();
 
     setTitle("");
     setMeta("description", "由 Issue 驱动的 AI 双语博客，涵盖人工智能、工程实践与技术随笔。");
@@ -363,56 +462,88 @@
     html += '<span class="count">' + posts.length + " " + esc(L("articlesCount")) + "</span>";
     html += "</div>";
 
-    if (cats.length > 1) {
-      html += '<div class="chip-row" id="chip-row">';
-      html += '<button type="button" class="chip' + (state.category ? "" : " is-active") +
-        '" data-cat="">' + esc(L("allCategories")) + "</button>";
-      cats.forEach(function (c) {
-        html += '<button type="button" class="chip' + (state.category === c ? " is-active" : "") +
-          '" data-cat="' + esc(c) + '">' + esc(c) + "</button>";
-      });
-      html += "</div>";
-    }
+    html += renderBreadcrumb();
 
     if (!posts.length) {
       html += '<div class="empty-state">';
       html += "<p>" + esc(L("empty")) + "</p>";
       html += "<small>" + esc(L("emptyHint")) + "</small>";
       html += "</div>";
+    } else if (q) {
+      // 有搜索词时给扁平结果列表，比在树里找更好扫
+      html += renderCards(posts);
     } else {
-      html += '<div class="post-grid">';
-      posts.forEach(function (p) {
-        var href = postUrl(p.slug);
-        html += '<article class="post-card" tabindex="0" role="link" aria-label="' + esc(p.title) + '">';
-        html += '<a class="post-card__link" href="' + href + '">';
-        html += '<div class="post-card__cat">' + esc(p.category || "") + "</div>";
-        html += '<h3 class="post-card__title">' + esc(p.title) + "</h3>";
-        html += '<p class="post-card__summary">' + esc(p.summary || "") + "</p>";
-        html += '<div class="post-card__meta"><span>' + esc(fmtDate(p.date)) + "</span>";
-        var langs = [];
-        if (p.cn) langs.push("中文");
-        if (p.en) langs.push("EN");
-        html += '<span class="post-card__lang">' + langs.join(" · ") + "</span></div>";
-        html += "</a></article>";
-      });
-      html += "</div>";
+      var roots = state.tree;
+      if (prefix) {
+        var node = findNode(state.tree, prefix);
+        roots = node ? [node] : [];
+      }
+      if (!roots.length) {
+        // 兜底：索引里没有 tree（旧版 posts.json）时退化成卡片列表
+        html += roots === state.tree && state.posts.length
+          ? renderCards(posts)
+          : '<div class="empty-state"><p>' + esc(L("empty")) + "</p></div>";
+      } else {
+        html += '<div class="tree-wrap">' + renderTree(roots, 0, prefix) + "</div>";
+      }
     }
 
     app.innerHTML = html;
-
-    var row = document.getElementById("chip-row");
-    if (row) {
-      row.querySelectorAll(".chip").forEach(function (chip) {
-        chip.addEventListener("click", function () {
-          state.category = chip.getAttribute("data-cat");
-          syncUrl();
-          renderHome();
-        });
-      });
-    }
+    bindHome();
     window.scrollTo(0, 0);
     updateSearchPanel();
     updateProgress();
+  }
+
+  /* 搜索结果 / 无树数据时的扁平卡片列表 */
+  function renderCards(posts) {
+    var html = '<div class="post-grid">';
+    posts.forEach(function (p) {
+      html += '<article class="post-card" tabindex="0" role="link" aria-label="' + esc(p.title) + '">';
+      html += '<a class="post-card__link" href="' + postUrl(p.slug) + '">';
+      html += '<div class="post-card__cat">' + esc(pathLabel(p.slug)) + "</div>";
+      html += '<h3 class="post-card__title">' + esc(p.title) + "</h3>";
+      html += '<p class="post-card__summary">' + esc(p.summary || "") + "</p>";
+      html += '<div class="post-card__meta"><span>' + esc(fmtDate(p.date)) + "</span>";
+      var langs = [];
+      if (p.cn) langs.push("中文");
+      if (p.en) langs.push("EN");
+      html += '<span class="post-card__lang">' + langs.join(" · ") + "</span></div>";
+      html += "</a></article>";
+    });
+    html += "</div>";
+    return html;
+  }
+
+  // 文章所在目录（去掉最后一段）作为路径标签
+  function pathLabel(slug) {
+    var segs = String(slug || "").split("/");
+    return segs.slice(0, -1).join(" / ") || segs[0] || "";
+  }
+
+  function bindHome() {
+    // 展开 / 收起
+    app.querySelectorAll(".tree__toggle[data-toggle]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var box = btn.parentElement && btn.parentElement.nextElementSibling;
+        if (!box || !box.classList.contains("tree__children")) return;
+        var open = box.hasAttribute("hidden");
+        if (open) box.removeAttribute("hidden");
+        else box.setAttribute("hidden", "");
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+    });
+    // 进入某个目录（只看它下面的文章）
+    app.querySelectorAll("[data-cat]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        state.category = normPath(b.getAttribute("data-cat"));
+        state.query = "";
+        var si = document.getElementById("search-input");
+        if (si) si.value = "";
+        syncUrl();
+        renderHome();
+      });
+    });
   }
 
   /* ---------- 渲染：文章 ---------- */
@@ -448,7 +579,19 @@
         html += '<a class="back-link" href="/">';
         html += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>';
         html += esc(L("back")) + "</a>";
-        html += '<div class="article-head__cat">' + esc(post.category || "") + "</div>";
+        html += '<nav class="crumb crumb--post" aria-label="目录路径">';
+        var segs2 = String(post.slug || "").split("/");
+        var acc2 = "";
+        segs2.forEach(function (s, i) {
+          acc2 = acc2 ? acc2 + "/" + s : s;
+          if (i > 0) html += '<span class="crumb__sep">/</span>';
+          if (i === segs2.length - 1) {
+            html += '<span class="crumb__item is-current">' + esc(s) + "</span>";
+          } else {
+            html += '<a class="crumb__item" href="/?cat=' + encodeURIComponent(acc2) + '">' + esc(s) + "</a>";
+          }
+        });
+        html += "</nav>";
         html += '<h1 class="article-head__title">' + esc(post.title) + "</h1>";
         html += '<div class="article-head__meta">';
         html += "<span>" + esc(L("postedOn")) + " " + esc(fmtDate(post.date)) + "</span>";
@@ -538,7 +681,7 @@
     hits.forEach(function (p) {
       html += '<li><a href="' + postUrl(p.slug) + '">';
       html += '<span class="search-panel__title">' + esc(p.title) + "</span>";
-      html += '<span class="search-panel__cat">' + esc(p.category || "") + "</span></a></li>";
+      html += '<span class="search-panel__cat">' + esc(pathLabel(p.slug)) + "</span></a></li>";
     });
     html += "</ul>";
     panel.innerHTML = html;
