@@ -387,7 +387,7 @@ jobs:
             exit 1
           fi
 
-          OP_CN="$(case "$OPERATION" in remove) echo 删除 ;; update) echo 修改 ;; *) echo 新增 ;; esac)"
+          OP_CN="$(case "$OPERATION" in remove) echo 删除 ;; update) echo 修改 ;; move) echo 移动 ;; *) echo 新增 ;; esac)"
           git commit -m "$TITLE" -m "由 Issue #$ISSUE_NUMBER 自动${OP_CN}中文文章
 
           操作: $OPERATION
