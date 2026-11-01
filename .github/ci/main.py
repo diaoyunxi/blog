@@ -164,18 +164,23 @@ except Exception:
 
 
 # ----------------------------------------------------------------------------
-# 目录工具（目录名强制中文）
+# 目录工具（目录名「必须看得懂」，允许中英混排）
 # ----------------------------------------------------------------------------
 # 中日韩统一表意文字（含扩展 A 区）
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
-# 目录名只保留汉字与数字，其余（英文、空格、符号）全部丢弃
-SEG_KEEP_RE = re.compile(r"[^\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff0-9]")
+# 目录名允许的字符：汉字 / 拉丁字母 / 数字 / 空格 / 连字符 / 下划线 / 点
+# （早期版本只保留汉字与数字，导致 OpenClaw 被写成「开爪」、完整标题被砍成「与对比」）
+SEG_KEEP_RE = re.compile(r"[^0-9A-Za-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff ._\-]")
+# 至少含一个汉字或一个拉丁字母（即不许纯数字、纯符号）
+SEG_MEANING_RE = re.compile(r"[A-Za-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+# 半截短语：以虚词/连接词开头，说明上层语义被截断了（如「与对比」「的区别」）
+SEG_DANGLING_PREFIXES = ("与", "和", "及", "或", "的", "之", "在", "对", "关于", "vs", "and", "or", "the", "of", "in", "to")
 
 
 def blog_tree(max_depth: int = 3, max_entries: int = 400) -> str:
     """列出博客目录结构，供模型判断分类。"""
     if not BLOG_ROOT.exists():
-        return f"({BLOG_DIR_NAME}/ 目录尚不存在，需要你自行创建中文分类)"
+        return f"({BLOG_DIR_NAME}/ 目录尚不存在，需要你自行创建分类目录)"
     lines: list[str] = []
     count = 0
 
@@ -257,17 +262,36 @@ def read_file(path: str, limit: int = 200) -> str:
     )
 
 
-def sanitize_segment(seg: str, max_len: int = 40) -> str:
-    """目录名单段清洗：只保留汉字与数字；不含汉字则报错，逼模型改用中文命名。"""
+def sanitize_segment(seg: str, max_len: int = 60) -> str:
+    """
+    目录名单段清洗。
+
+    原则：**目录名必须让人一眼看懂**，因此允许中英混排——
+    专有名词（OpenClaw、DeepSeek、live2d-widget、apt…）要保留原文，
+    早期版本把它们过滤掉后，「OpenClaw」变成「开爪」、
+    「OpenClaw 与 DeepSeek Harness 对比」被砍成「与对比」，完全不可读。
+
+    现在只做三件事：剔除路径危险字符、要求含实义字符、拒绝半截短语。
+    """
     s = (seg or "").strip().replace("\\", "/")
     if s in ("", ".", ".."):
         raise ValueError("目录段为空")
+    # 去掉路径分隔符与文件系统不安全字符，其余（含英文与空格）全部保留
     s = SEG_KEEP_RE.sub("", s)
-    if not CJK_RE.search(s):
+    s = re.sub(r"\s+", " ", s).strip(" ._-")
+    s = s.lstrip(".")
+    if not s:
+        raise ValueError(f"目录段 {seg!r} 清洗后为空，请换一个含中文或英文专有名词的目录名")
+    if not SEG_MEANING_RE.search(s):
         raise ValueError(
-            f"目录段 {seg!r} 不含中文，已被拒绝——所有目录名必须使用中文，请改用中文重新调用（如 人工智能/检索增强生成）"
+            f"目录段 {seg!r} 不含任何中文或英文实义词，请写一个能看懂的名字"
         )
-    return s[:max_len] or "未命名"
+    if s.lower().startswith(SEG_DANGLING_PREFIXES):
+        raise ValueError(
+            f"目录段 {seg!r} 是半截短语，读不出主题——"
+            "请把主谓补全（如 OpenClaw与DeepSeek Harness对比），不要用「与对比」「的区别」这类残句"
+        )
+    return s[:max_len]
 
 
 def sanitize_rel_dir(raw: str) -> str:
@@ -286,7 +310,7 @@ def sanitize_rel_dir(raw: str) -> str:
 def sanitize_branch(rel: str) -> str:
     """分支名 = 博客根目录名 + 中文目录路径（根目录名本身不做中文过滤）。"""
     raw = (rel or "").replace("\\", "/").strip("/")
-    parts = [sanitize_segment(p, 60) for p in raw.split("/")]
+    parts = [sanitize_segment(p, 40) for p in raw.split("/")]
     parts = [p for p in parts if p]
     if not parts:
         raise ValueError("分支名为空")
@@ -653,13 +677,13 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "save_article",
-            "description": "【新增文章】在中文目录下创建 cn.md。目录名必须是中文。",
+            "description": "【新增文章】在分类目录下创建 cn.md。目录名以中文为主，但专有名词必须保留英文原文。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "target_dir": {
                         "type": "string",
-                        "description": "相对博客根目录的多层中文目录，如 后端/数据库/索引选型；最后一段即以主题命名的文件夹",
+                        "description": "相对博客根目录的多层目录，如 后端/数据库/索引选型、人工智能/智能体应用/OpenClaw开源助手；最后一段即以主题命名的文件夹",
                     },
                     "cn_md": {"type": "string", "description": "简体中文完整 Markdown 正文（含 YAML front matter）"},
                     "summary": {"type": "string", "description": "一句话总结本次新增内容"},
@@ -798,12 +822,18 @@ SYSTEM_PROMPT = f"""你是一个"中文技术博客写作 Agent"，运行在 Git
 1. 博客根目录：{BLOG_DIR_NAME}/（仓库根目录下）。先检查 list_blog_tree 给出的既有分类：
    - 有合适分类就复用它（可以再往下加一层子目录）；
    - 没有合适分类就自行新建，允许多层子目录。
-2. **所有目录名（含分类层和最后一层主题目录）必须使用简体中文**，例如：
-   后端/数据库/索引选型、前端/构建工具/打包体积优化、数据库/查询优化。
-   （注意：这些只是格式示例，**文章主题永远以下面的 Issue 为准**，不要照抄示例里的主题。）
-   严禁出现任何英文单词、拼音、kebab-case、日期、issue 编号或泛化词（杂项、其他、新文章）。
-   程序会过滤掉非汉字字符，纯英文目录会被直接拒绝并报错，届时请立刻改用中文重新调用。
-3. 新增时最后一层目录名必须体现 issue 主题，用简短中文词组（4~12 字为宜），目录下文件名固定为 `cn.md`。
+2. **目录名的唯一标准：让人一眼看懂它在讲什么。中文为主，但专有名词必须保留英文原文。**
+   - 允许中英混排，例如：`人工智能/智能体应用/OpenClaw开源助手`、
+     `人工智能/智能体应用/OpenClaw与DeepSeek Harness对比`、`前端/博客装饰/看板娘组件`。
+   - **分类层（第一层）**用中文大类：`人工智能`、`前端`、`后端`、`系统工具`、`数据库` 等。
+   - **严禁音译或硬翻专有名词**：`OpenClaw` 不能写成「开爪」，`DeepSeek` 不能写成「深度求索」，
+     `live2d-widget` 就照写 `live2d-widget`。项目名、产品名、品牌、技术术语一律保留原文，
+     中文只用来补充语义（如 `开源助手`、`与...对比`、`原理`）。
+   - **严禁半截短语**：不许出现「与对比」「的区别」「的介绍」这类残句，
+     必须把主体写全，如 `OpenClaw与DeepSeek Harness对比`。
+   - 严禁日期、issue 编号、纯泛化词（杂项、其他、新文章）单独做目录名。
+   - 程序会剔除 `/ \\ : * ? " < > |` 等不安全字符，其余字符（含英文、空格、连字符）都会保留。
+3. 新增时最后一层目录名必须完整体现 Issue 主题，目录下文件名固定为 `cn.md`。
    **禁止**：末层与任一层父目录同名（如 后端/框架/框架）；
    禁止用泛化词单独做末层（框架、工具、原理、介绍、组件、系统、方案 这类词单独出现不合格），
    必须带上具体主题，例如 后端/框架/极简路由框架、系统工具/包管理器/依赖解析。
@@ -1184,7 +1214,7 @@ def run_agent() -> None:
                     "content": (
                         f"本轮必须调用 {force_tool} 落盘，禁止再检索。\n"
                         f"主题严格为 Issue #{ISSUE_NUMBER}《{ISSUE_TITLE}》。\n"
-                        f"若是新增：目录最后一段用中文概括该主题，不要使用任何示例里的目录名。\n"
+                        f"若是新增：目录最后一段要完整体现主题（专有名词保留英文原文，不要音译），不要使用任何示例里的目录名。\n"
                         f"若是修改或删除：target_file 必须是上文清单里本次提出者可改动的文件。\n"
                         f"Issue 原文：\n{ISSUE_BODY[:800]}"
                     ),
