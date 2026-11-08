@@ -8,11 +8,10 @@ venv/
 *.log
 .env
 
-# 构建产物（由 build.mjs 生成，部署到 Cloudflare Pages 的 dist/）
-# 注意：Cloudflare Pages 项目未配置 build command，流水线会跳过构建步骤、
-# 直接部署 clone 到的 dist/。因此 dist/ 必须提交入库，构建才能成功。
-# 若之后在 Pages 控制台 / API 设置了 build command（node build.mjs），
-# 可再把 dist/ 重新加入忽略并删除已提交的 dist/。
+# dist/ 是 Cloudflare Workers 的静态资产目录（wrangler.toml → [assets].directory）。
+# 本地与 CI 部署前都会先执行 node build.mjs 重新生成；仓库中仍保留一份快照，
+# 便于没有构建步骤的部署方式直接上传。
+# 若统一改为「构建后部署」，可把 dist/ 加入忽略并删除已提交的快照。
 node_modules/
 
 .agnes/

@@ -2,17 +2,21 @@
   "name": "diaoyunxi-blog",
   "version": "1.0.0",
   "private": true,
-  "description": "由 Issue 驱动的 AI 双语博客 — 静态站点（Cloudflare Pages）",
+  "description": "由 Issue 驱动的 AI 双语博客 — Cloudflare Workers（静态资产）",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "dev": "node build.mjs",
-    "preview": "node build.mjs"
+    "dev": "node build.mjs && wrangler dev",
+    "preview": "node build.mjs && wrangler dev",
+    "deploy": "node build.mjs && wrangler deploy"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "puppeteer-core": "^23.11.1"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
   }
 }

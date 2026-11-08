@@ -1,10 +1,22 @@
-# Cloudflare Pages 项目配置
-# 说明：本仓库通过 Cloudflare Pages 部署，构建命令与输出目录也可在
-# Pages 控制台设置；此处用 wrangler.toml 固化配置，便于复现与本地预览。
+# Cloudflare Workers 配置（由 Cloudflare Pages 迁移而来）
+# 关键变化：
+#   pages_build_output_dir  ->  [assets].directory
+#   Pages Functions 先于资产 ->  Workers 默认资产优先，故用 run_worker_first = true
+#                              让 worker.js 接管每个请求（安全头/跳转/SPA 回退/404）。
+# compatibility_date 沿用原 Pages 配置，避免迁移时引入运行时行为变化；
+# 需要新运行时特性时再单独提升。
+# 部署：npm run deploy（= node build.mjs && wrangler deploy）
 
 name = "diaoyunxi-blog"
-pages_build_output_dir = "dist"
+main = "worker.js"
 compatibility_date = "2024-09-23"
 
-# 本地预览（可选）：npx wrangler pages dev dist
-# 部署（可选）：npx wrangler pages deploy dist
+[assets]
+directory = "dist"
+binding = "ASSETS"
+run_worker_first = true
+# 未命中资产时由 worker.js 自行回退 index.html / 404.html，不让资产层代劳
+not_found_handling = "none"
+
+# 本地预览：npm run dev
+# 部署：    npm run deploy

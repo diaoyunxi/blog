@@ -2,8 +2,8 @@
    build.mjs — 静态站构建脚本（Node 原生，无依赖）
    作用：扫描 blog/ 下的 cn.md / en.md，解析 front matter，
         生成 dist/posts.json、dist/rss.xml、dist/sitemap.xml，
-        并把站点文件打包进 dist/（Cloudflare Pages 输出目录）。
-   在 Cloudflare Pages 上，每次 push 都会重新运行，自动纳入新增文章。
+        并把站点文件打包进 dist/（Cloudflare Workers 静态资产目录）。
+   部署到 Workers 前运行一次（npm run build / npm run deploy），新文章会自动纳入索引。
    ============================================================ */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync, existsSync, statSync, rmSync } from "node:fs";
 import { join, dirname, relative, extname } from "node:path";
@@ -14,7 +14,8 @@ const ROOT = __dirname;
 const DIST = join(ROOT, "dist");
 const BLOG = join(ROOT, "blog");
 
-// 站点根地址（部署到 Cloudflare Pages 后按需修改，例如 https://你的域名）
+// 站点根地址：迁移到 Workers 后请在部署环境设置 SITE_URL（workers.dev 地址或自定义域名），
+// 否则 RSS / sitemap 里的链接仍指向旧的 Pages 域名。
 const SITE_URL = process.env.SITE_URL || "https://diaoyunxi-blog.pages.dev";
 const SITE_TITLE = "diaoyunxi · 博客";
 const SITE_DESC = "由 Issue 驱动的 AI 双语博客";
@@ -182,7 +183,7 @@ function escapeXml(s) {
   );
 }
 
-/* ---------- 拷贝文件到 dist ---------- */
+/* ---------- 拷贝文件到 dist（Workers 静态资产目录） ---------- */
 function copyToDist() {
   if (existsSync(DIST)) rmSync(DIST, { recursive: true, force: true });
   mkdirSync(DIST, { recursive: true });

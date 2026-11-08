@@ -12,25 +12,27 @@ GitHub Issue 一创建，CI 里的 AI Agent 就按你的要求在 `blog/<中文�
 └── workflows/
     ├── issue-blog-agent.yml   # issues.opened → 生成 → .md 校验（失败重跑）→ 直推主分支 → 回帖
     ├── auto-merge-md-pr.yml   # pull_request_target.opened/reopened → .md 校验通过则自动合并
-    └── deploy-pages.yml       # push main → 构建静态站 → 部署 Cloudflare Pages
+    └── deploy-worker.yml      # push main → 构建静态站 → 部署 Cloudflare Workers
 docs/
 └── ai-prompts.md          # AI 默认提示词全记录（system / user / 运行时追加指令 / 工具表）
 blog/                      # 博客根目录（可在 vars.BLOG_DIR 改），内容由 Agent 生成
 ├── <中文分类>/<中文主题>/cn.md   # 中文正文（含 YAML front matter）
 └── <中文分类>/<中文主题>/en.md   # 英文正文（可选，有则前端语言切换可用）
 
-# —— 静态站点（Cloudflare Pages）——
+# —— 静态站点（Cloudflare Workers + Static Assets）——
 index.html                 # 站点唯一 HTML 外壳，外链全部 CSS/JS
-404.html                   # Cloudflare Pages 自动生效的 404 页
+404.html                   # 未匹配路径的 404 页（由 worker.js 返回）
 assets/
 ├── css/base.css           # 整页样式与设计系统（明暗主题、组件）
 ├── css/markdown.css       # Markdown 正文渲染样式
 ├── js/app.js              # 路由、搜索、目录、渲染逻辑
 └── img/favicon.svg
 build.mjs                  # 构建脚本：扫描 blog/ → posts.json / rss.xml / sitemap.xml → dist/
-package.json               # npm run build
-wrangler.toml              # Cloudflare Pages 配置（输出目录 dist）
-_headers / _redirects      # Pages 自定义响应头与重定向
+package.json               # npm run build / dev / deploy
+worker.js                  # Workers 入口：安全头、/feed 跳转、SPA 回退、404
+wrangler.toml              # Workers 配置（main + [assets]）
+_headers / _redirects      # 静态资产响应头与重定向（Workers 原生支持，保留）
+.github/workflows/deploy-worker.yml  # CI 构建并部署 Worker
 ```
 
 ## 需要配置的 Secrets / Variables
@@ -50,8 +52,9 @@ _headers / _redirects      # Pages 自定义响应头与重定向
 | `MERGE_METHOD` | Variables | 可选 | PR 自动合并方式：`squash`（默认）/ `merge` / `rebase` |
 | `DELETE_BRANCH` | Variables | 可选 | 自动合并后是否删除源分支，默认 `true` |
 | `ABORT_ON_CONFLICT` | Variables | 可选 | PR 冲突时放弃合并并留言，默认 `true` |
-| `CLOUDFLARE_API_TOKEN` | Secrets | 部署用 | Cloudflare API Token（需 Pages 编辑权限） |
+| `CLOUDFLARE_API_TOKEN` | Secrets | 部署用 | Cloudflare API Token（需 **Workers Scripts 编辑**权限，不是 Pages 权限） |
 | `CLOUDFLARE_ACCOUNT_ID` | Secrets | 部署用 | Cloudflare Account ID |
+| `SITE_URL` | Variables | 推荐 | RSS / sitemap 使用的站点根地址；迁移后设为 workers.dev 或自定义域名 |
 
 ## 触发与流程
 
@@ -220,10 +223,24 @@ gh api /repos/<owner>/<repo>/actions/permissions/workflow --jq '.'
 
 ---
 
-## 🌐 静态站点（Cloudflare Pages）
+## 🌐 静态站点（Cloudflare Workers + Static Assets）
 
 仓库同时是一个**纯静态博客站点**：Agent 只负责往 `blog/` 写 Markdown，站点由前端在运行时读取并渲染，
 因此**新增文章不需要改任何前端代码**——推送即上线。
+
+站点现在部署为一个 **Cloudflare Worker + 静态资产**：`worker.js` 是入口，
+`dist/` 经 `wrangler.toml` 的 `[assets]` 挂载到 `env.ASSETS`。与旧 Pages 部署的关键差别：
+
+| Pages | Workers |
+|---|---|
+| `pages_build_output_dir` | `[assets].directory = "dist"` |
+| Pages Functions 先于静态资产执行 | 默认资产优先，已设 `run_worker_first = true` 让 `worker.js` 接管每个请求 |
+| 自动识别 `index.html` / `404.html` | 需显式声明 `not_found_handling`，此处由 `worker.js` 自行兜底，故设为 `none` |
+| `_headers` / `_redirects` | Workers 原生同样支持，两个文件保留在 `dist/` 中 |
+
+> ⚠️ `_headers` / `_redirects` 在 Workers 静态资产里**依然原生生效**；
+> `worker.js` 在 `run_worker_first = true` 模式下再显式注入一次安全头、处理 `/feed` 与
+> `/post/*` 回退，用于保证行为与旧 Pages 完全一致（同名头被覆盖为同一取值）。
 
 ### 架构
 
@@ -238,8 +255,8 @@ gh api /repos/<owner>/<repo>/actions/permissions/workflow --jq '.'
 - **全外链**：HTML 通过 `<link>` / `<script src>` 引用 `assets/` 下的样式与脚本，无内联样式表；
   渲染依赖走 CDN（marked / DOMPurify / highlight.js / KaTeX）。
 - **样式分离**：`assets/css/base.css` 管整页与组件，`assets/css/markdown.css` 专管 Markdown 正文排版。
-- **路由**：真实路径（`/`、`/post/<中文分类>/<中文主题>/`），由 `_redirects` 的 `/post/* → /index.html 200` 做 SPA 回退；
-  链接走 History API，中键/新标签页打开等原生行为不受影响。文章 URL 对搜索引擎与 RSS 订阅者可见。
+- **路由**：真实路径（`/`、`/post/<中文分类>/<中文主题>/`），由 `worker.js` 与 `_redirects` 的
+  `/post/* → /index.html 200` 做 SPA 回退；链接走 History API，中键/新标签页打开等原生行为不受影响。
 - **交互**：站内搜索、分类筛选、文章目录（TOC）、代码一键复制、阅读进度、上下篇导航、明暗主题、中英切换。
 
 ### 构建
@@ -252,27 +269,34 @@ npm run build     # = node build.mjs
 `dist/posts.json`（文章索引，站点据此渲染列表与目录）、`dist/rss.xml`、`dist/sitemap.xml`、`dist/robots.txt`
 → 拷贝 `index.html` / `assets/` / `blog/` / `_headers` / `_redirects` 到 `dist/`。
 
-> `dist/` 已在 `.gitignore` 中，不入库；Cloudflare 每次部署都会重新构建，**新文章会自动进入索引**。
+> `dist/` 即 Workers 的静态资产目录。仓库里保留了一份快照，但每次部署前都会先跑
+> `node build.mjs` 重新生成，**新文章会自动进入索引**。
 
-### 部署到 Cloudflare Pages
+### 部署到 Cloudflare Workers
 
-**方式一（推荐，零维护）**：Pages 控制台连接本仓库后设置
+**方式一（推荐，CI 自动部署）**：已内置 `.github/workflows/deploy-worker.yml`。在仓库
+Settings → Secrets and variables 配置 `CLOUDFLARE_API_TOKEN`（需 Workers Scripts 编辑权限）与
+`CLOUDFLARE_ACCOUNT_ID` 后，`main` 每次推送都会自动构建并执行 `wrangler deploy`。
+未配置这两个 Secret 时该 workflow 会安全跳过，不会让主分支 CI 变红。
 
-| 配置项 | 值 |
-|---|---|
-| 框架预设 | None |
-| 构建命令 | `npm run build` |
-| 构建输出目录 | `dist` |
-| 生产分支 | `main` |
+**方式二（手动）**：
 
-**方式二（CI 自动部署）**：已内置 `.github/workflows/deploy-pages.yml`，配置好
-`CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID` 两个 Secret 后，`main` 每次推送自动构建并发布。
+```bash
+npm install
+SITE_URL=https://你的域名 npm run deploy   # = node build.mjs && wrangler deploy
+```
+
+> 首次部署会创建名为 `diaoyunxi-blog` 的 Worker，默认地址为
+> `https://diaoyunxi-blog.<账户子域>.workers.dev`。绑定自定义域名后请把 `SITE_URL` 设为该域名，
+> 否则 RSS / sitemap 仍指向旧的 Pages 地址。确认 Workers 正常后即可删除原 Pages 项目，
+> 避免两套部署并存。
 
 ### 本地预览
 
 ```bash
-npm run build
-npx wrangler pages dev dist     # 或 python3 -m http.server -d dist
+npm install
+npm run dev       # = node build.mjs && wrangler dev
+# 或：npm run build && python3 -m http.server -d dist
 ```
 
 ### 修改站点外观
@@ -281,3 +305,4 @@ npx wrangler pages dev dist     # 或 python3 -m http.server -d dist
 - 正文排版（表格、代码块、公式）→ `assets/css/markdown.css`
 - 交互逻辑 → `assets/js/app.js`
 - 站点标题 / 描述 / 默认域名 → `index.html` 与 `build.mjs` 顶部的 `SITE_URL`
+- Worker 行为（安全头、重定向、SPA 回退、404）→ `worker.js` 与 `wrangler.toml`

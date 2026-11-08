@@ -2,7 +2,7 @@
    app.js — 博客前端逻辑
    - 真实路径路由： /            首页（?q=关键词&cat=分类）
                   /post/<slug>/ 文章
-     （配合 Cloudflare Pages 的 _redirects 做 SPA 回退）
+     （配合 Workers 的 worker.js / _redirects 做 SPA 回退）
    - 读取 posts.json 索引，按需 fetch 并渲染 /blog/<path>/cn.md | en.md
    - 站内搜索 / 分类筛选 / 目录导航 / 代码复制 / 阅读进度 / 上下篇
    - 中文·EN 切换 与 明暗主题

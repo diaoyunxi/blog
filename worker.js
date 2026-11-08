@@ -1,11 +1,14 @@
 /*
  * worker.js — Cloudflare Workers 入口（Static Assets）
- * 职责（替代原 Pages 的 _headers / _redirects，Workers 不自动解析它们）：
+ * 职责（在 run_worker_first 模式下接管全部请求，兜底 Pages 时代的行为）：
  *   1. 服务静态资产（dist/）
  *   2. /feed           → 301 到 /rss.xml
  *   3. /post/<slug>/  → SPA 外壳 index.html（200）
  *   4. 其余未匹配       → 404.html（404）
  *   5. 注入安全响应头 + 缓存策略
+ *
+ * 注：Workers 静态资产同样原生支持 _headers / _redirects，二者仍保留在 dist/ 中；
+ * 这里再显式处理一次，保证安全头、/feed 与 /post/* 回退与旧 Pages 完全一致。
  */
 
 // 安全头（对应 _headers 的 /* 规则）
