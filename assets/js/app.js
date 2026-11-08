@@ -42,6 +42,14 @@
         treeTitle: "目录",
         browseTree: "按目录浏览",
         enterFolder: "只看这个目录",
+        navLabel: "文章导航",
+        expandAll: "全部展开",
+        collapseAll: "全部折叠",
+        blogRoot: "我的博客",
+        postsUnit: "篇",
+        untagged: "随笔",
+        undated: "未标日期",
+        unclassified: "未分类",
       },
       en: {
         heroEyebrow: "ISSUE-DRIVEN AI BILINGUAL BLOG",
@@ -71,6 +79,14 @@
         treeTitle: "Directory",
         browseTree: "Browse by folder",
         enterFolder: "Only this folder",
+        navLabel: "Article navigation",
+        expandAll: "Expand all",
+        collapseAll: "Collapse all",
+        blogRoot: "My Blog",
+        postsUnit: "posts",
+        untagged: "Note",
+        undated: "Undated",
+        unclassified: "Uncategorized",
       },
     },
   };
@@ -87,7 +103,6 @@
     query: "",
     // 目录树聚焦路径（对应 blog/ 下的真实目录路径，如 "系统工具/包管理器"）
     category: "",
-    tree: [],
     tocObserver: null,
   };
 
@@ -281,7 +296,7 @@
   function syncTocOpen() {
     var d = document.getElementById("toc");
     if (!d) return;
-    var wide = window.matchMedia("(min-width: 1100px)").matches;
+    var wide = window.matchMedia("(min-width: 1200px)").matches;
     d.open = wide;
   }
 
@@ -321,7 +336,6 @@
       .then(function (r) { return r.ok ? r.json() : { posts: [] }; })
       .then(function (data) {
         state.posts = data.posts || [];
-        state.tree = data.tree || [];
         return state.posts;
       });
   }
@@ -352,74 +366,168 @@
       .sort(byDateDesc);
   }
 
-  function findNode(nodes, path) {
-    for (var i = 0; i < nodes.length; i++) {
-      if (nodes[i].path === path) return nodes[i];
-      var r = findNode(nodes[i].children || [], path);
-      if (r) return r;
-    }
-    return null;
+  /* ---------- 渲染：树形导航栏（首页主导航 / 文章页左侧导航共用） ----------
+     形状：根节点「我的博客」→ 分类文件夹 → 年份文件夹 → 文章行（日期 / 标签 / 阅读时长）；
+     每层带数量徽标，支持全部展开 / 全部折叠、当前文章高亮。
+     只复用站点主题变量，不引入新的主题色。 */
+  var NAV_ICON_FOLDER =
+    '<svg class="nav-tree__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2a2 2 0 0 1 1.5.7l1 1.1H18.5A2.5 2.5 0 0 1 21 9.3v7.2a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9z"/></svg>';
+  var NAV_ICON_YEAR =
+    '<svg class="nav-tree__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/></svg>';
+  var NAV_ICON_FILE =
+    '<svg class="nav-tree__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3.5H7.5A2 2 0 0 0 5.5 5.5v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8.5z"/><path d="M14 3.5v5h5"/></svg>';
+  var NAV_ICON_CHEV =
+    '<svg class="nav-tree__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+
+  function navShortDate(p) {
+    var d = fmtDate(p.date);
+    return d && d.length >= 10 ? d.slice(5) : d;
+  }
+  function navYear(p) {
+    var d = fmtDate(p.date);
+    return d && d.length >= 4 ? d.slice(0, 4) : t("undated");
+  }
+  function navTag(p) {
+    return (p.tags && p.tags.length && p.tags[0]) || t("untagged");
+  }
+  function navMinutes(p) {
+    if (p.minutes) return p.minutes;
+    // 旧版 posts.json 没有 minutes 时，用摘要长度兜底估算
+    return Math.max(1, Math.round(String(p.summary || p.title || "").length / 500));
   }
 
-  /* ---------- 渲染：目录树 ---------- */
-  var ICON_FOLDER =
-    '<svg class="tree__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2a2 2 0 0 1 1.5.7l1 1.1H18.5A2.5 2.5 0 0 1 21 9.3v7.2a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9z"/></svg>';
-  var ICON_FILE =
-    '<svg class="tree__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3.5H7.5A2 2 0 0 0 5.5 5.5v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8.5z"/><path d="M14 3.5v5h5"/></svg>';
-  var ICON_CHEV =
-    '<svg class="tree__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
-
-  function renderTree(nodes, depth, focusPath) {
-    var html = '<ul class="tree' + (depth === 0 ? " tree--root" : "") + '">';
-    nodes.forEach(function (n) {
-      var kids = n.children || [];
-      var hasKids = kids.length > 0;
-      // 聚焦路径上的祖先节点默认展开
-      var open =
-        depth < 1 ||
-        !focusPath ||
-        (focusPath + "/").indexOf(n.path + "/") === 0 ||
-        (n.path + "/").indexOf(focusPath + "/") === 0;
-
-      html += '<li class="tree__item">';
-      html += '<div class="tree__row' + (n.post ? " tree__row--post" : "") + '">';
-
-      if (hasKids) {
-        html +=
-          '<button type="button" class="tree__toggle" data-toggle="' + esc(n.path) +
-          '" aria-expanded="' + (open ? "true" : "false") +
-          '" aria-label="' + esc(n.name) + '">' + ICON_CHEV + "</button>";
-      } else {
-        html += '<span class="tree__toggle tree__toggle--leaf" aria-hidden="true"></span>';
+  // 聚合：一级分类 → 年份 → 文章（按日期倒序）
+  function buildNavGroups(posts) {
+    var groups = [];
+    var index = Object.create(null);
+    posts.slice().sort(byDateDesc).forEach(function (p) {
+      var segs = String(p.slug || "").split("/");
+      var cat = segs[0] || t("unclassified");
+      var year = navYear(p);
+      if (!index[cat]) {
+        index[cat] = { name: cat, path: cat, count: 0, years: [], yearIndex: Object.create(null) };
+        groups.push(index[cat]);
       }
-
-      html += n.post ? ICON_FILE : ICON_FOLDER;
-      html += '<span class="tree__name">' + esc(n.name) + "</span>";
-
-      if (n.post) {
-        html +=
-          '<a class="tree__post" href="' + postUrl(n.post.slug) + '">' +
-          esc(n.post.title) + "</a>";
-        html += '<span class="tree__date">' + esc(fmtDate(n.post.date)) + "</span>";
+      var g = index[cat];
+      g.count++;
+      if (!g.yearIndex[year]) {
+        g.yearIndex[year] = { name: year, count: 0, posts: [] };
+        g.years.push(g.yearIndex[year]);
       }
-      if (hasKids) {
-        html +=
-          '<button type="button" class="tree__enter" data-cat="' + esc(n.path) +
-          '" title="只看这个目录下的文章">进入 →</button>';
-      }
-      html += '<span class="tree__count">' + (n.count || 0) + "</span>";
-      html += "</div>";
-
-      if (hasKids) {
-        html +=
-          '<div class="tree__children"' + (open ? "" : " hidden") + ">" +
-          renderTree(kids, depth + 1, focusPath) +
-          "</div>";
-      }
-      html += "</li>";
+      var y = g.yearIndex[year];
+      y.count++;
+      y.posts.push(p);
     });
-    html += "</ul>";
+    groups.forEach(function (g) {
+      g.years.sort(function (a, b) { return b.name.localeCompare(a.name); });
+    });
+    groups.sort(function (a, b) { return a.name.localeCompare(b.name, "zh-Hans-CN"); });
+    return groups;
+  }
+
+  function navChevron(open, key) {
+    return '<button type="button" class="nav-tree__toggle" data-navtoggle="' + esc(key) +
+      '" aria-expanded="' + (open ? "true" : "false") + '" aria-label="' +
+      esc(open ? t("collapseAll") : t("expandAll")) + '">' + NAV_ICON_CHEV + "</button>";
+  }
+
+  function renderNavBar(posts, currentSlug, focusCat) {
+    var groups = buildNavGroups(posts);
+    var cur = null;
+    if (currentSlug) {
+      for (var i = 0; i < posts.length; i++) {
+        if (posts[i].slug === currentSlug) { cur = posts[i]; break; }
+      }
+    }
+    var activeCat = cur ? String(cur.slug).split("/")[0] : (focusCat ? String(focusCat).split("/")[0] : "");
+    var activeYear = cur ? navYear(cur) : "";
+
+    var html = "";
+    html += '<nav class="nav-bar" aria-label="' + esc(t("navLabel")) + '">';
+    html += '<div class="nav-bar__tools">';
+    html += '<button type="button" class="nav-bar__btn" data-nav-all="open">' + esc(t("expandAll")) + "</button>";
+    html += '<button type="button" class="nav-bar__btn" data-nav-all="close">' + esc(t("collapseAll")) + "</button>";
+    html += "</div>";
+    html += '<div class="nav-tree">';
+    html += '<div class="nav-tree__root">';
+    html += '<span class="nav-tree__toggle nav-tree__toggle--leaf" aria-hidden="true"></span>';
+    html += NAV_ICON_FOLDER;
+    html += '<span class="nav-tree__label">' + esc(t("blogRoot")) + "</span>";
+    html += '<span class="nav-tree__count">' + posts.length + " " + esc(t("postsUnit")) + "</span>";
+    html += "</div>";
+    html += '<ul class="nav-tree__list">';
+
+    groups.forEach(function (g, gi) {
+      var catActive = activeCat && g.name === activeCat;
+      html += '<li class="nav-tree__item">';
+      html += '<div class="nav-tree__row nav-tree__row--folder' + (catActive ? " is-active" : "") + '">';
+      html += navChevron(true, "cat-" + gi);
+      html += NAV_ICON_FOLDER;
+      html += '<a class="nav-tree__label" href="/?cat=' + encodeURIComponent(g.path) +
+        '" title="' + esc(t("enterFolder")) + '">' + esc(g.name) + "</a>";
+      html += '<span class="nav-tree__count">' + g.count + "</span>";
+      html += "</div>";
+      html += '<ul class="nav-tree__children">';
+      g.years.forEach(function (y, yi) {
+        // 文章页展开当前文章所在年份；首页默认展开每个分类下最新的年份
+        var yearOpen = (activeYear && y.name === activeYear) || (!activeYear && yi === 0);
+        var yearActive = catActive && activeYear && y.name === activeYear;
+        html += '<li class="nav-tree__item">';
+        html += '<div class="nav-tree__row nav-tree__row--folder nav-tree__row--year' +
+          (yearActive ? " is-active" : "") + '">';
+        html += navChevron(yearOpen, "cat-" + gi + "-year-" + yi);
+        html += NAV_ICON_YEAR;
+        html += '<span class="nav-tree__label">' + esc(y.name) + "</span>";
+        html += '<span class="nav-tree__count">' + y.count + "</span>";
+        html += "</div>";
+        html += '<ul class="nav-tree__children"' + (yearOpen ? "" : " hidden") + ">";
+        y.posts.forEach(function (p) {
+          var isCur = currentSlug && p.slug === currentSlug;
+          html += '<li class="nav-tree__item">';
+          html += '<div class="nav-tree__row nav-tree__row--post' + (isCur ? " is-current" : "") + '">';
+          html += '<span class="nav-tree__toggle nav-tree__toggle--leaf" aria-hidden="true"></span>';
+          html += NAV_ICON_FILE;
+          html += '<a class="nav-tree__title" href="' + postUrl(p.slug) + '">' + esc(p.title) + "</a>";
+          html += '<span class="nav-tree__date">' + esc(navShortDate(p)) + "</span>";
+          html += '<span class="nav-tree__tag">' + esc(navTag(p)) + "</span>";
+          html += '<span class="nav-tree__mins">' + navMinutes(p) + " min</span>";
+          html += "</div></li>";
+        });
+        html += "</ul></li>";
+      });
+      html += "</ul></li>";
+    });
+
+    html += "</ul></div></nav>";
     return html;
+  }
+
+  function bindNavBar(scope) {
+    if (!scope) return;
+    scope.querySelectorAll("[data-navtoggle]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var box = btn.parentElement && btn.parentElement.nextElementSibling;
+        if (!box || !box.classList.contains("nav-tree__children")) return;
+        var open = box.hasAttribute("hidden");
+        if (open) box.removeAttribute("hidden");
+        else box.setAttribute("hidden", "");
+        btn.setAttribute("aria-expanded", String(open));
+      });
+    });
+    scope.querySelectorAll("[data-nav-all]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var open = btn.getAttribute("data-nav-all") === "open";
+        var bar = btn.closest(".nav-bar");
+        if (!bar) return;
+        bar.querySelectorAll(".nav-tree__children").forEach(function (box) {
+          if (open) box.removeAttribute("hidden");
+          else box.setAttribute("hidden", "");
+        });
+        bar.querySelectorAll("[data-navtoggle]").forEach(function (b) {
+          b.setAttribute("aria-expanded", String(open));
+        });
+      });
+    });
   }
 
   function renderBreadcrumb() {
@@ -473,23 +581,14 @@
       // 有搜索词时给扁平结果列表，比在树里找更好扫
       html += renderCards(posts);
     } else {
-      var roots = state.tree;
-      if (prefix) {
-        var node = findNode(state.tree, prefix);
-        roots = node ? [node] : [];
-      }
-      if (!roots.length) {
-        // 兜底：索引里没有 tree（旧版 posts.json）时退化成卡片列表
-        html += roots === state.tree && state.posts.length
-          ? renderCards(posts)
-          : '<div class="empty-state"><p>' + esc(L("empty")) + "</p></div>";
-      } else {
-        html += '<div class="tree-wrap">' + renderTree(roots, 0, prefix) + "</div>";
-      }
+      // 首页主导航：分类 → 年份 → 文章的树形导航栏
+      html += '<div class="nav-bar-wrap">' + renderNavBar(posts, "", prefix) + "</div>";
     }
 
+    app.classList.remove("is-post");
     app.innerHTML = html;
     bindHome();
+    bindNavBar(app);
     window.scrollTo(0, 0);
     updateSearchPanel();
     updateProgress();
@@ -522,17 +621,6 @@
   }
 
   function bindHome() {
-    // 展开 / 收起
-    app.querySelectorAll(".tree__toggle[data-toggle]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var box = btn.parentElement && btn.parentElement.nextElementSibling;
-        if (!box || !box.classList.contains("tree__children")) return;
-        var open = box.hasAttribute("hidden");
-        if (open) box.removeAttribute("hidden");
-        else box.setAttribute("hidden", "");
-        btn.setAttribute("aria-expanded", open ? "true" : "false");
-      });
-    });
     // 进入某个目录（只看它下面的文章）
     app.querySelectorAll("[data-cat]").forEach(function (b) {
       b.addEventListener("click", function () {
@@ -563,6 +651,7 @@
     setTitle(post.title);
     setMeta("description", post.summary || post.title);
 
+    app.classList.add("is-post");
     app.innerHTML = '<div class="loading">' + esc(t("loading")) + "</div>";
 
     fetch(file + "?t=" + Date.now())
@@ -609,6 +698,10 @@
         }
         html += "</header>";
 
+        // 左侧树形导航栏（与首页同款）
+        html += '<aside class="article-nav" aria-label="' + esc(t("navLabel")) + '">' +
+          renderNavBar(state.posts, post.slug, "") + "</aside>";
+
         // 目录区（渲染后填充）—— 可滚动，需可聚焦
         html += '<aside class="article-side" id="article-side" tabindex="0" aria-label="'
           + esc(t("tocTitle")) + '"></aside>';
@@ -637,6 +730,7 @@
         html += "</div>";
 
         app.innerHTML = html;
+        bindNavBar(app);
 
         var prose = document.getElementById("prose");
         prose.innerHTML = renderMarkdown(md);
@@ -656,6 +750,7 @@
   }
 
   function renderNotFound() {
+    app.classList.remove("is-post");
     setTitle(t("notFound"));
     app.innerHTML =
       '<div class="container" style="padding:64px 0;text-align:center">' +

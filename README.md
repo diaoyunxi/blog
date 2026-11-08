@@ -259,6 +259,7 @@ gh api /repos/<owner>/<repo>/actions/permissions/workflow --jq '.'
 - **路由**：真实路径（`/`、`/post/<中文分类>/<中文主题>/`），由 `_redirects` 的
   `/post/* → /index.html 200` 做 SPA 回退；链接走 History API，中键/新标签页打开等原生行为不受影响。
 - **交互**：站内搜索、分类筛选、文章目录（TOC）、代码一键复制、阅读进度、上下篇导航、明暗主题、中英切换。
+- **树形导航栏**：首页主导航与文章页左侧栏共用同一个组件，按「根节点 → 分类 → 年份 → 文章」分组，每层带文章数徽标，文章行展示日期、标签与阅读时长；支持「全部展开 / 全部折叠」与当前文章高亮。配色全部沿用主题变量，图片只描述形状。
 
 ### 构建
 
@@ -267,7 +268,7 @@ npm run build     # = node build.mjs
 ```
 
 `build.mjs` 会：扫描 `blog/` 下的 `cn.md` / `en.md` → 解析 front matter → 生成
-`dist/posts.json`（文章索引，站点据此渲染列表与目录）、`dist/rss.xml`、`dist/sitemap.xml`、`dist/robots.txt`
+`dist/posts.json`（文章索引，含阅读时长 `minutes`，站点据此渲染列表与树形导航）、`dist/rss.xml`、`dist/sitemap.xml`、`dist/robots.txt`
 → 拷贝 `index.html` / `assets/` / `blog/` / `_headers` / `_redirects` 到 `dist/`。
 
 > `dist/` 即 Workers 的静态资产目录。仓库里保留了一份快照，但每次部署前都会先跑
@@ -332,5 +333,6 @@ npm run dev       # = node build.mjs && wrangler dev
 - 配色、字号、间距、组件 → `assets/css/base.css`（顶部 `:root` 即设计令牌）
 - 正文排版（表格、代码块、公式）→ `assets/css/markdown.css`
 - 交互逻辑 → `assets/js/app.js`
+- 首页 / 文章页树形导航栏 → `assets/js/app.js` 的 `renderNavBar()` / `bindNavBar()` 与 `assets/css/base.css` 的 `.nav-bar` 段
 - 站点标题 / 描述 / 默认域名 → `index.html` 与 `build.mjs` 顶部的 `SITE_URL`
 - 动态功能（接口、鉴权、计数、A/B）→ `worker.js` 的「扩展点」+ `wrangler.toml` 的 `run_worker_first`

@@ -1,338 +1,648 @@
 {
-  "generated": "2026-11-01T10:01:28.953Z",
-  "count": 11,
+  "generated": "2026-11-08T10:57:14.855Z",
+  "count": 12,
   "tree": [
     {
-      "name": "后端\\框架\\极简路由框架",
-      "path": "后端\\框架\\极简路由框架",
-      "post": {
-        "slug": "后端\\框架\\极简路由框架",
-        "category": "后端\\框架\\极简路由框架",
-        "title": "后端\\框架\\极简路由框架",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/18",
-        "cn": "/blog/后端\\框架\\极简路由框架\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
+      "name": "后端",
+      "path": "后端",
+      "post": null,
+      "children": [
+        {
+          "name": "框架",
+          "path": "后端/框架",
+          "post": null,
+          "children": [
+            {
+              "name": "极简路由框架",
+              "path": "后端/框架/极简路由框架",
+              "post": {
+                "slug": "后端/框架/极简路由框架",
+                "category": "后端 / 框架",
+                "title": "Express 框架：从原理到用法的一次系统介绍",
+                "date": "2026-10-31",
+                "tags": [
+                  "Node.js",
+                  "Express",
+                  "Web框架",
+                  "中间件",
+                  "路由"
+                ],
+                "summary": "系统介绍 Express：它解决什么问题、内部怎么工作、最小示例到完整项目、常用配置、安全注意事项、常见坑与选型建议。",
+                "minutes": 16,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/18",
+                "cn": "/blog/后端/框架/极简路由框架/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            }
+          ],
+          "count": 1
+        },
+        {
+          "name": "异步运行时",
+          "path": "后端/异步运行时",
+          "post": null,
+          "children": [
+            {
+              "name": "Rust异步运行时Tokio",
+              "path": "后端/异步运行时/Rust异步运行时Tokio",
+              "post": {
+                "slug": "后端/异步运行时/Rust异步运行时Tokio",
+                "category": "后端 / 异步运行时",
+                "title": "Tokio 异步运行时：实现原理与使用方法",
+                "date": "2026-11-01",
+                "tags": [
+                  "Rust",
+                  "Tokio",
+                  "异步",
+                  "后端"
+                ],
+                "summary": "介绍 tokio-rs/tokio 的组件构成、调度器原理、feature 体系与常见用法。",
+                "minutes": 12,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/23",
+                "cn": "/blog/后端/异步运行时/Rust异步运行时Tokio/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            }
+          ],
+          "count": 1
+        },
+        {
+          "name": "Web安全",
+          "path": "后端/Web安全",
+          "post": null,
+          "children": [
+            {
+              "name": "CORS跨域共享机制",
+              "path": "后端/Web安全/CORS跨域共享机制",
+              "post": {
+                "slug": "后端/Web安全/CORS跨域共享机制",
+                "category": "后端 / Web安全",
+                "title": "CORS 跨域共享机制：原理、初衷、优缺点与绕过方法",
+                "date": "2026-11-07",
+                "tags": [
+                  "CORS",
+                  "跨域",
+                  "同源策略",
+                  "Web安全",
+                  "预检请求"
+                ],
+                "summary": "从同源策略的约束出发，讲清 CORS 的 HTTP 头机制、简单请求与预检流程、配置优缺点，以及常见绕过与攻击手段。",
+                "minutes": 13,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/26",
+                "cn": "/blog/后端/Web安全/CORS跨域共享机制/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            }
+          ],
+          "count": 1
+        }
+      ],
+      "count": 3
     },
     {
-      "name": "后端\\异步运行时\\Rust异步运行时Tokio",
-      "path": "后端\\异步运行时\\Rust异步运行时Tokio",
-      "post": {
-        "slug": "后端\\异步运行时\\Rust异步运行时Tokio",
-        "category": "后端\\异步运行时\\Rust异步运行时Tokio",
-        "title": "后端\\异步运行时\\Rust异步运行时Tokio",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/23",
-        "cn": "/blog/后端\\异步运行时\\Rust异步运行时Tokio\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
+      "name": "前端",
+      "path": "前端",
+      "post": null,
+      "children": [
+        {
+          "name": "博客装饰",
+          "path": "前端/博客装饰",
+          "post": null,
+          "children": [
+            {
+              "name": "看板娘组件",
+              "path": "前端/博客装饰/看板娘组件",
+              "post": {
+                "slug": "前端/博客装饰/看板娘组件",
+                "category": "前端 / 博客装饰",
+                "title": "在博客中加入 Live2D 看板娘：live2d-widget 实战",
+                "date": "2026-10-31",
+                "tags": [
+                  "Live2D",
+                  "博客",
+                  "前端",
+                  "看板娘"
+                ],
+                "summary": "介绍开源项目 live2d-widget 的功能、实现原理与多种部署方式，帮助你在博客中轻松加入会互动的 Live2D 看板娘。",
+                "minutes": 7,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/15",
+                "cn": "/blog/前端/博客装饰/看板娘组件/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            }
+          ],
+          "count": 1
+        },
+        {
+          "name": "网页增强",
+          "path": "前端/网页增强",
+          "post": null,
+          "children": [
+            {
+              "name": "页内智能体",
+              "path": "前端/网页增强/页内智能体",
+              "post": {
+                "slug": "前端/网页增强/页内智能体",
+                "category": "前端 / 网页增强",
+                "title": "page-agent 的 demo CDN 脚本与仓库介绍",
+                "date": "2026-10-31",
+                "tags": [
+                  "page-agent",
+                  "前端",
+                  "智能体",
+                  "CDN",
+                  "DOM",
+                  "安全"
+                ],
+                "summary": "介绍 page-agent@1.8.0 的 IIFE demo 脚本、所属仓库、三条落地路径、纯文本 DOM 工作链路、安全要点、已知局限与选型建议。",
+                "minutes": 11,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/16",
+                "cn": "/blog/前端/网页增强/页内智能体/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            }
+          ],
+          "count": 1
+        }
+      ],
+      "count": 2
     },
     {
-      "name": "前端\\博客装饰\\看板娘组件",
-      "path": "前端\\博客装饰\\看板娘组件",
-      "post": {
-        "slug": "前端\\博客装饰\\看板娘组件",
-        "category": "前端\\博客装饰\\看板娘组件",
-        "title": "前端\\博客装饰\\看板娘组件",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/15",
-        "cn": "/blog/前端\\博客装饰\\看板娘组件\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
+      "name": "人工智能",
+      "path": "人工智能",
+      "post": null,
+      "children": [
+        {
+          "name": "生成式模型",
+          "path": "人工智能/生成式模型",
+          "post": null,
+          "children": [
+            {
+              "name": "文生图扩散原理",
+              "path": "人工智能/生成式模型/文生图扩散原理",
+              "post": {
+                "slug": "人工智能/生成式模型/文生图扩散原理",
+                "category": "人工智能 / 生成式模型",
+                "title": "AI 文生图的扩散模型原理",
+                "date": "2026-10-18",
+                "tags": [
+                  "扩散模型",
+                  "文生图",
+                  "Stable Diffusion",
+                  "DiT",
+                  "Flux"
+                ],
+                "summary": "系统讲解扩散模型前向加噪与反向去噪、Latent Diffusion、条件注入与主流模型路线",
+                "minutes": 7,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/1",
+                "cn": "/blog/人工智能/生成式模型/文生图扩散原理/cn.md",
+                "en": "/blog/人工智能/生成式模型/文生图扩散原理/en.md"
+              },
+              "children": [],
+              "count": 1
+            }
+          ],
+          "count": 1
+        },
+        {
+          "name": "智能体应用",
+          "path": "人工智能/智能体应用",
+          "post": null,
+          "children": [
+            {
+              "name": "开源智能体",
+              "path": "人工智能/智能体应用/开源智能体",
+              "post": {
+                "slug": "人工智能/智能体应用/开源智能体",
+                "category": "人工智能 / 智能体应用",
+                "title": "DeepSeek Harness（dsh）详解",
+                "date": "2026-10-31",
+                "tags": [
+                  "DeepSeek",
+                  "Agent",
+                  "智能体框架",
+                  "插件架构",
+                  "开源"
+                ],
+                "summary": "介绍 DeepSeek AI 开源智能体框架 DeepSeek Harness（dsh）：它解决什么问题、架构原理、快速上手、配置与插件生态、安全与隐私、局限与选型建议。",
+                "minutes": 12,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/20",
+                "cn": "/blog/人工智能/智能体应用/开源智能体/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            },
+            {
+              "name": "OpenClaw开源助手",
+              "path": "人工智能/智能体应用/OpenClaw开源助手",
+              "post": {
+                "slug": "人工智能/智能体应用/OpenClaw开源助手",
+                "category": "人工智能 / 智能体应用",
+                "title": "OpenClaw：把 AI 助手装进你聊天工具里的开源 Agent",
+                "date": "2026-11-01",
+                "tags": [
+                  "OpenClaw",
+                  "AI助手",
+                  "智能体",
+                  "开源",
+                  "LLM",
+                  "本地部署"
+                ],
+                "summary": "从实现到使用完整介绍 OpenClaw：Gateway/渠道/技能/插件的架构、源码开发循环、多渠道接入、共享会话与安全注意事项",
+                "minutes": 16,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/21",
+                "cn": "/blog/人工智能/智能体应用/OpenClaw开源助手/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            },
+            {
+              "name": "OpenClaw与DeepSeek Harness对比",
+              "path": "人工智能/智能体应用/OpenClaw与DeepSeek Harness对比",
+              "post": {
+                "slug": "人工智能/智能体应用/OpenClaw与DeepSeek Harness对比",
+                "category": "人工智能 / 智能体应用",
+                "title": "OpenClaw 与 DeepSeek Harness 区别详解",
+                "date": "2026-10-31",
+                "tags": [
+                  "智能体",
+                  "开源",
+                  "对比",
+                  "OpenClaw",
+                  "DeepSeek"
+                ],
+                "summary": "横向对比 OpenClaw 与 DeepSeek Harness 的定位、核心机制、扩展方式、安全模型与适用场景",
+                "minutes": 8,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/22",
+                "cn": "/blog/人工智能/智能体应用/OpenClaw与DeepSeek Harness对比/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            },
+            {
+              "name": "page-agent的MCP Server配置与用法",
+              "path": "人工智能/智能体应用/page-agent的MCP Server配置与用法",
+              "post": {
+                "slug": "人工智能/智能体应用/page-agent的MCP Server配置与用法",
+                "category": "人工智能 / 智能体应用",
+                "title": "page-agent 的 MCP Server 配置与用法",
+                "date": "2026-11-01",
+                "tags": [
+                  "page-agent",
+                  "MCP",
+                  "智能体",
+                  "浏览器自动化",
+                  "GUI Agent"
+                ],
+                "summary": "介绍 alibaba/page-agent 项目中 MCP Server（@page-agent/mcp）的作用、安装、接入 MCP 客户端的配置方法，以及典型使用场景与限制。",
+                "minutes": 9,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/25",
+                "cn": "/blog/人工智能/智能体应用/page-agent的MCP Server配置与用法/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            }
+          ],
+          "count": 4
+        }
+      ],
+      "count": 5
     },
     {
-      "name": "前端\\网页增强\\页内智能体",
-      "path": "前端\\网页增强\\页内智能体",
-      "post": {
-        "slug": "前端\\网页增强\\页内智能体",
-        "category": "前端\\网页增强\\页内智能体",
-        "title": "前端\\网页增强\\页内智能体",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/16",
-        "cn": "/blog/前端\\网页增强\\页内智能体\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
-    },
-    {
-      "name": "人工智能\\生成式模型\\文生图扩散原理",
-      "path": "人工智能\\生成式模型\\文生图扩散原理",
-      "post": {
-        "slug": "人工智能\\生成式模型\\文生图扩散原理",
-        "category": "人工智能\\生成式模型\\文生图扩散原理",
-        "title": "人工智能\\生成式模型\\文生图扩散原理",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/1",
-        "cn": "/blog/人工智能\\生成式模型\\文生图扩散原理\\cn.md",
-        "en": "/blog/人工智能\\生成式模型\\文生图扩散原理\\en.md"
-      },
-      "children": [],
-      "count": 1
-    },
-    {
-      "name": "人工智能\\智能体应用\\开源智能体",
-      "path": "人工智能\\智能体应用\\开源智能体",
-      "post": {
-        "slug": "人工智能\\智能体应用\\开源智能体",
-        "category": "人工智能\\智能体应用\\开源智能体",
-        "title": "人工智能\\智能体应用\\开源智能体",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/20",
-        "cn": "/blog/人工智能\\智能体应用\\开源智能体\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
-    },
-    {
-      "name": "人工智能\\智能体应用\\OpenClaw开源助手",
-      "path": "人工智能\\智能体应用\\OpenClaw开源助手",
-      "post": {
-        "slug": "人工智能\\智能体应用\\OpenClaw开源助手",
-        "category": "人工智能\\智能体应用\\OpenClaw开源助手",
-        "title": "人工智能\\智能体应用\\OpenClaw开源助手",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/21",
-        "cn": "/blog/人工智能\\智能体应用\\OpenClaw开源助手\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
-    },
-    {
-      "name": "人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比",
-      "path": "人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比",
-      "post": {
-        "slug": "人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比",
-        "category": "人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比",
-        "title": "人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/22",
-        "cn": "/blog/人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
-    },
-    {
-      "name": "人工智能\\智能体应用\\page-agent的MCP Server配置与用法",
-      "path": "人工智能\\智能体应用\\page-agent的MCP Server配置与用法",
-      "post": {
-        "slug": "人工智能\\智能体应用\\page-agent的MCP Server配置与用法",
-        "category": "人工智能\\智能体应用\\page-agent的MCP Server配置与用法",
-        "title": "人工智能\\智能体应用\\page-agent的MCP Server配置与用法",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/25",
-        "cn": "/blog/人工智能\\智能体应用\\page-agent的MCP Server配置与用法\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
-    },
-    {
-      "name": "系统工具\\包管理器\\进阶包工具原理",
-      "path": "系统工具\\包管理器\\进阶包工具原理",
-      "post": {
-        "slug": "系统工具\\包管理器\\进阶包工具原理",
-        "category": "系统工具\\包管理器\\进阶包工具原理",
-        "title": "系统工具\\包管理器\\进阶包工具原理",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/17",
-        "cn": "/blog/系统工具\\包管理器\\进阶包工具原理\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
-    },
-    {
-      "name": "系统工具\\游戏谱面\\自制谱规范",
-      "path": "系统工具\\游戏谱面\\自制谱规范",
-      "post": {
-        "slug": "系统工具\\游戏谱面\\自制谱规范",
-        "category": "系统工具\\游戏谱面\\自制谱规范",
-        "title": "系统工具\\游戏谱面\\自制谱规范",
-        "date": "",
-        "tags": [],
-        "summary": "",
-        "lang": "zh-CN",
-        "source_issue": "https://github.com/diaoyunxi/blog/issues/19",
-        "cn": "/blog/系统工具\\游戏谱面\\自制谱规范\\cn.md",
-        "en": null
-      },
-      "children": [],
-      "count": 1
+      "name": "系统工具",
+      "path": "系统工具",
+      "post": null,
+      "children": [
+        {
+          "name": "包管理器",
+          "path": "系统工具/包管理器",
+          "post": null,
+          "children": [
+            {
+              "name": "进阶包工具原理",
+              "path": "系统工具/包管理器/进阶包工具原理",
+              "post": {
+                "slug": "系统工具/包管理器/进阶包工具原理",
+                "category": "系统工具 / 包管理器",
+                "title": "完整介绍 apt 的原理",
+                "date": "2026-10-31",
+                "tags": [
+                  "Linux",
+                  "包管理器",
+                  "apt",
+                  "dpkg",
+                  "Debian",
+                  "Ubuntu",
+                  "依赖解析",
+                  "软件源"
+                ],
+                "summary": "从定位分层、软件源、update、依赖解析、安装链路、dpkg 状态、pinning、签名信任、缓存清理到常见坑，完整梳理 apt install 一条命令背后的原理。",
+                "minutes": 21,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/17",
+                "cn": "/blog/系统工具/包管理器/进阶包工具原理/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            }
+          ],
+          "count": 1
+        },
+        {
+          "name": "游戏谱面",
+          "path": "系统工具/游戏谱面",
+          "post": null,
+          "children": [
+            {
+              "name": "自制谱规范",
+              "path": "系统工具/游戏谱面/自制谱规范",
+              "post": {
+                "slug": "系统工具/游戏谱面/自制谱规范",
+                "category": "系统工具 / 游戏谱面",
+                "title": "Phigros 自制谱（Fanmade）JSON 文件规范与写法",
+                "date": "2026-10-31",
+                "tags": [
+                  "Phigros",
+                  "音乐游戏",
+                  "谱面制作",
+                  "JSON",
+                  "Sonolus",
+                  "PGR编辑器"
+                ],
+                "summary": "探究 Phigros 自制谱面的 JSON 文件结构、必填字段、音符与判定线写法，以及打包与调试要点",
+                "minutes": 16,
+                "lang": "zh-CN",
+                "source_issue": "https://github.com/diaoyunxi/blog/issues/19",
+                "cn": "/blog/系统工具/游戏谱面/自制谱规范/cn.md",
+                "en": null
+              },
+              "children": [],
+              "count": 1
+            }
+          ],
+          "count": 1
+        }
+      ],
+      "count": 2
     }
   ],
   "posts": [
     {
-      "slug": "人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比",
-      "category": "人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比",
-      "title": "人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比",
-      "date": "",
-      "tags": [],
-      "summary": "",
+      "slug": "后端/Web安全/CORS跨域共享机制",
+      "category": "后端 / Web安全",
+      "title": "CORS 跨域共享机制：原理、初衷、优缺点与绕过方法",
+      "date": "2026-11-07",
+      "tags": [
+        "CORS",
+        "跨域",
+        "同源策略",
+        "Web安全",
+        "预检请求"
+      ],
+      "summary": "从同源策略的约束出发，讲清 CORS 的 HTTP 头机制、简单请求与预检流程、配置优缺点，以及常见绕过与攻击手段。",
+      "minutes": 13,
       "lang": "zh-CN",
-      "source_issue": "https://github.com/diaoyunxi/blog/issues/22",
-      "cn": "/blog/人工智能\\智能体应用\\OpenClaw与DeepSeek Harness对比\\cn.md",
+      "source_issue": "https://github.com/diaoyunxi/blog/issues/26",
+      "cn": "/blog/后端/Web安全/CORS跨域共享机制/cn.md",
       "en": null
     },
     {
-      "slug": "人工智能\\智能体应用\\OpenClaw开源助手",
-      "category": "人工智能\\智能体应用\\OpenClaw开源助手",
-      "title": "人工智能\\智能体应用\\OpenClaw开源助手",
-      "date": "",
-      "tags": [],
-      "summary": "",
+      "slug": "人工智能/智能体应用/OpenClaw开源助手",
+      "category": "人工智能 / 智能体应用",
+      "title": "OpenClaw：把 AI 助手装进你聊天工具里的开源 Agent",
+      "date": "2026-11-01",
+      "tags": [
+        "OpenClaw",
+        "AI助手",
+        "智能体",
+        "开源",
+        "LLM",
+        "本地部署"
+      ],
+      "summary": "从实现到使用完整介绍 OpenClaw：Gateway/渠道/技能/插件的架构、源码开发循环、多渠道接入、共享会话与安全注意事项",
+      "minutes": 16,
       "lang": "zh-CN",
       "source_issue": "https://github.com/diaoyunxi/blog/issues/21",
-      "cn": "/blog/人工智能\\智能体应用\\OpenClaw开源助手\\cn.md",
+      "cn": "/blog/人工智能/智能体应用/OpenClaw开源助手/cn.md",
       "en": null
     },
     {
-      "slug": "人工智能\\智能体应用\\page-agent的MCP Server配置与用法",
-      "category": "人工智能\\智能体应用\\page-agent的MCP Server配置与用法",
-      "title": "人工智能\\智能体应用\\page-agent的MCP Server配置与用法",
-      "date": "",
-      "tags": [],
-      "summary": "",
+      "slug": "人工智能/智能体应用/page-agent的MCP Server配置与用法",
+      "category": "人工智能 / 智能体应用",
+      "title": "page-agent 的 MCP Server 配置与用法",
+      "date": "2026-11-01",
+      "tags": [
+        "page-agent",
+        "MCP",
+        "智能体",
+        "浏览器自动化",
+        "GUI Agent"
+      ],
+      "summary": "介绍 alibaba/page-agent 项目中 MCP Server（@page-agent/mcp）的作用、安装、接入 MCP 客户端的配置方法，以及典型使用场景与限制。",
+      "minutes": 9,
       "lang": "zh-CN",
       "source_issue": "https://github.com/diaoyunxi/blog/issues/25",
-      "cn": "/blog/人工智能\\智能体应用\\page-agent的MCP Server配置与用法\\cn.md",
+      "cn": "/blog/人工智能/智能体应用/page-agent的MCP Server配置与用法/cn.md",
       "en": null
     },
     {
-      "slug": "人工智能\\智能体应用\\开源智能体",
-      "category": "人工智能\\智能体应用\\开源智能体",
-      "title": "人工智能\\智能体应用\\开源智能体",
-      "date": "",
-      "tags": [],
-      "summary": "",
-      "lang": "zh-CN",
-      "source_issue": "https://github.com/diaoyunxi/blog/issues/20",
-      "cn": "/blog/人工智能\\智能体应用\\开源智能体\\cn.md",
-      "en": null
-    },
-    {
-      "slug": "人工智能\\生成式模型\\文生图扩散原理",
-      "category": "人工智能\\生成式模型\\文生图扩散原理",
-      "title": "人工智能\\生成式模型\\文生图扩散原理",
-      "date": "",
-      "tags": [],
-      "summary": "",
-      "lang": "zh-CN",
-      "source_issue": "https://github.com/diaoyunxi/blog/issues/1",
-      "cn": "/blog/人工智能\\生成式模型\\文生图扩散原理\\cn.md",
-      "en": "/blog/人工智能\\生成式模型\\文生图扩散原理\\en.md"
-    },
-    {
-      "slug": "前端\\博客装饰\\看板娘组件",
-      "category": "前端\\博客装饰\\看板娘组件",
-      "title": "前端\\博客装饰\\看板娘组件",
-      "date": "",
-      "tags": [],
-      "summary": "",
-      "lang": "zh-CN",
-      "source_issue": "https://github.com/diaoyunxi/blog/issues/15",
-      "cn": "/blog/前端\\博客装饰\\看板娘组件\\cn.md",
-      "en": null
-    },
-    {
-      "slug": "前端\\网页增强\\页内智能体",
-      "category": "前端\\网页增强\\页内智能体",
-      "title": "前端\\网页增强\\页内智能体",
-      "date": "",
-      "tags": [],
-      "summary": "",
-      "lang": "zh-CN",
-      "source_issue": "https://github.com/diaoyunxi/blog/issues/16",
-      "cn": "/blog/前端\\网页增强\\页内智能体\\cn.md",
-      "en": null
-    },
-    {
-      "slug": "后端\\异步运行时\\Rust异步运行时Tokio",
-      "category": "后端\\异步运行时\\Rust异步运行时Tokio",
-      "title": "后端\\异步运行时\\Rust异步运行时Tokio",
-      "date": "",
-      "tags": [],
-      "summary": "",
+      "slug": "后端/异步运行时/Rust异步运行时Tokio",
+      "category": "后端 / 异步运行时",
+      "title": "Tokio 异步运行时：实现原理与使用方法",
+      "date": "2026-11-01",
+      "tags": [
+        "Rust",
+        "Tokio",
+        "异步",
+        "后端"
+      ],
+      "summary": "介绍 tokio-rs/tokio 的组件构成、调度器原理、feature 体系与常见用法。",
+      "minutes": 12,
       "lang": "zh-CN",
       "source_issue": "https://github.com/diaoyunxi/blog/issues/23",
-      "cn": "/blog/后端\\异步运行时\\Rust异步运行时Tokio\\cn.md",
+      "cn": "/blog/后端/异步运行时/Rust异步运行时Tokio/cn.md",
       "en": null
     },
     {
-      "slug": "后端\\框架\\极简路由框架",
-      "category": "后端\\框架\\极简路由框架",
-      "title": "后端\\框架\\极简路由框架",
-      "date": "",
-      "tags": [],
-      "summary": "",
+      "slug": "人工智能/智能体应用/OpenClaw与DeepSeek Harness对比",
+      "category": "人工智能 / 智能体应用",
+      "title": "OpenClaw 与 DeepSeek Harness 区别详解",
+      "date": "2026-10-31",
+      "tags": [
+        "智能体",
+        "开源",
+        "对比",
+        "OpenClaw",
+        "DeepSeek"
+      ],
+      "summary": "横向对比 OpenClaw 与 DeepSeek Harness 的定位、核心机制、扩展方式、安全模型与适用场景",
+      "minutes": 8,
+      "lang": "zh-CN",
+      "source_issue": "https://github.com/diaoyunxi/blog/issues/22",
+      "cn": "/blog/人工智能/智能体应用/OpenClaw与DeepSeek Harness对比/cn.md",
+      "en": null
+    },
+    {
+      "slug": "人工智能/智能体应用/开源智能体",
+      "category": "人工智能 / 智能体应用",
+      "title": "DeepSeek Harness（dsh）详解",
+      "date": "2026-10-31",
+      "tags": [
+        "DeepSeek",
+        "Agent",
+        "智能体框架",
+        "插件架构",
+        "开源"
+      ],
+      "summary": "介绍 DeepSeek AI 开源智能体框架 DeepSeek Harness（dsh）：它解决什么问题、架构原理、快速上手、配置与插件生态、安全与隐私、局限与选型建议。",
+      "minutes": 12,
+      "lang": "zh-CN",
+      "source_issue": "https://github.com/diaoyunxi/blog/issues/20",
+      "cn": "/blog/人工智能/智能体应用/开源智能体/cn.md",
+      "en": null
+    },
+    {
+      "slug": "前端/博客装饰/看板娘组件",
+      "category": "前端 / 博客装饰",
+      "title": "在博客中加入 Live2D 看板娘：live2d-widget 实战",
+      "date": "2026-10-31",
+      "tags": [
+        "Live2D",
+        "博客",
+        "前端",
+        "看板娘"
+      ],
+      "summary": "介绍开源项目 live2d-widget 的功能、实现原理与多种部署方式，帮助你在博客中轻松加入会互动的 Live2D 看板娘。",
+      "minutes": 7,
+      "lang": "zh-CN",
+      "source_issue": "https://github.com/diaoyunxi/blog/issues/15",
+      "cn": "/blog/前端/博客装饰/看板娘组件/cn.md",
+      "en": null
+    },
+    {
+      "slug": "前端/网页增强/页内智能体",
+      "category": "前端 / 网页增强",
+      "title": "page-agent 的 demo CDN 脚本与仓库介绍",
+      "date": "2026-10-31",
+      "tags": [
+        "page-agent",
+        "前端",
+        "智能体",
+        "CDN",
+        "DOM",
+        "安全"
+      ],
+      "summary": "介绍 page-agent@1.8.0 的 IIFE demo 脚本、所属仓库、三条落地路径、纯文本 DOM 工作链路、安全要点、已知局限与选型建议。",
+      "minutes": 11,
+      "lang": "zh-CN",
+      "source_issue": "https://github.com/diaoyunxi/blog/issues/16",
+      "cn": "/blog/前端/网页增强/页内智能体/cn.md",
+      "en": null
+    },
+    {
+      "slug": "后端/框架/极简路由框架",
+      "category": "后端 / 框架",
+      "title": "Express 框架：从原理到用法的一次系统介绍",
+      "date": "2026-10-31",
+      "tags": [
+        "Node.js",
+        "Express",
+        "Web框架",
+        "中间件",
+        "路由"
+      ],
+      "summary": "系统介绍 Express：它解决什么问题、内部怎么工作、最小示例到完整项目、常用配置、安全注意事项、常见坑与选型建议。",
+      "minutes": 16,
       "lang": "zh-CN",
       "source_issue": "https://github.com/diaoyunxi/blog/issues/18",
-      "cn": "/blog/后端\\框架\\极简路由框架\\cn.md",
+      "cn": "/blog/后端/框架/极简路由框架/cn.md",
       "en": null
     },
     {
-      "slug": "系统工具\\包管理器\\进阶包工具原理",
-      "category": "系统工具\\包管理器\\进阶包工具原理",
-      "title": "系统工具\\包管理器\\进阶包工具原理",
-      "date": "",
-      "tags": [],
-      "summary": "",
+      "slug": "系统工具/包管理器/进阶包工具原理",
+      "category": "系统工具 / 包管理器",
+      "title": "完整介绍 apt 的原理",
+      "date": "2026-10-31",
+      "tags": [
+        "Linux",
+        "包管理器",
+        "apt",
+        "dpkg",
+        "Debian",
+        "Ubuntu",
+        "依赖解析",
+        "软件源"
+      ],
+      "summary": "从定位分层、软件源、update、依赖解析、安装链路、dpkg 状态、pinning、签名信任、缓存清理到常见坑，完整梳理 apt install 一条命令背后的原理。",
+      "minutes": 21,
       "lang": "zh-CN",
       "source_issue": "https://github.com/diaoyunxi/blog/issues/17",
-      "cn": "/blog/系统工具\\包管理器\\进阶包工具原理\\cn.md",
+      "cn": "/blog/系统工具/包管理器/进阶包工具原理/cn.md",
       "en": null
     },
     {
-      "slug": "系统工具\\游戏谱面\\自制谱规范",
-      "category": "系统工具\\游戏谱面\\自制谱规范",
-      "title": "系统工具\\游戏谱面\\自制谱规范",
-      "date": "",
-      "tags": [],
-      "summary": "",
+      "slug": "系统工具/游戏谱面/自制谱规范",
+      "category": "系统工具 / 游戏谱面",
+      "title": "Phigros 自制谱（Fanmade）JSON 文件规范与写法",
+      "date": "2026-10-31",
+      "tags": [
+        "Phigros",
+        "音乐游戏",
+        "谱面制作",
+        "JSON",
+        "Sonolus",
+        "PGR编辑器"
+      ],
+      "summary": "探究 Phigros 自制谱面的 JSON 文件结构、必填字段、音符与判定线写法，以及打包与调试要点",
+      "minutes": 16,
       "lang": "zh-CN",
       "source_issue": "https://github.com/diaoyunxi/blog/issues/19",
-      "cn": "/blog/系统工具\\游戏谱面\\自制谱规范\\cn.md",
+      "cn": "/blog/系统工具/游戏谱面/自制谱规范/cn.md",
       "en": null
+    },
+    {
+      "slug": "人工智能/生成式模型/文生图扩散原理",
+      "category": "人工智能 / 生成式模型",
+      "title": "AI 文生图的扩散模型原理",
+      "date": "2026-10-18",
+      "tags": [
+        "扩散模型",
+        "文生图",
+        "Stable Diffusion",
+        "DiT",
+        "Flux"
+      ],
+      "summary": "系统讲解扩散模型前向加噪与反向去噪、Latent Diffusion、条件注入与主流模型路线",
+      "minutes": 7,
+      "lang": "zh-CN",
+      "source_issue": "https://github.com/diaoyunxi/blog/issues/1",
+      "cn": "/blog/人工智能/生成式模型/文生图扩散原理/cn.md",
+      "en": "/blog/人工智能/生成式模型/文生图扩散原理/en.md"
     }
   ]
 }

@@ -53,6 +53,17 @@ function parseFrontMatter(text) {
   return fm;
 }
 
+/* ---------- 阅读时长（按正文字符数估算，与前端保持一致） ---------- */
+function stripFrontMatter(text) {
+  if (!text.startsWith("---")) return text;
+  const end = text.indexOf("\n---", 3);
+  if (end === -1) return text;
+  return text.slice(end + 4).replace(/^\n+/, "");
+}
+function readingMinutes(text) {
+  return Math.max(1, Math.round(stripFrontMatter(text).length / 500));
+}
+
 /* ---------- 生成文章索引 ---------- */
 function buildPosts() {
   const files = walk(BLOG);
@@ -80,6 +91,7 @@ function buildPosts() {
       date: fm.date || "",
       tags: fm.tags || [],
       summary: fm.summary || "",
+      minutes: readingMinutes(text),
       lang: fm.lang || "zh-CN",
       source_issue: fm.source_issue || "",
       cn: entry.cn || null,
