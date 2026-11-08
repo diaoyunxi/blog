@@ -1,3 +1,5 @@
+> [← 返回文档目录](../README.md) ｜ 原文件：`docs/ai-prompts.md`。
+
 # AI 默认提示词
 
 本文记录 Issue→Blog Agent 实际发给模型的全部提示词，便于调试与改写。
