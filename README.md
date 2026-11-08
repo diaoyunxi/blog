@@ -21,7 +21,7 @@ blog/                      # 博客根目录（可在 vars.BLOG_DIR 改），内
 
 # —— 静态站点（Cloudflare Workers + Static Assets）——
 index.html                 # 站点唯一 HTML 外壳，外链全部 CSS/JS
-404.html                   # 未匹配路径的 404 页（由 worker.js 返回）
+404.html                   # 未匹配路径的 404 页（not_found_handling = 404-page）
 assets/
 ├── css/base.css           # 整页样式与设计系统（明暗主题、组件）
 ├── css/markdown.css       # Markdown 正文渲染样式
@@ -29,7 +29,7 @@ assets/
 └── img/favicon.svg
 build.mjs                  # 构建脚本：扫描 blog/ → posts.json / rss.xml / sitemap.xml → dist/
 package.json               # npm run build / dev / deploy
-worker.js                  # Workers 入口：安全头、/feed 跳转、SPA 回退、404
+worker.js                  # Workers 入口：动态路径与兜底逻辑（静态资产不经过它）
 wrangler.toml              # Workers 配置（main + [assets]）
 _headers / _redirects      # 静态资产响应头与重定向（Workers 原生支持，保留）
 .github/workflows/deploy-worker.yml  # CI 构建并部署 Worker
@@ -228,19 +228,20 @@ gh api /repos/<owner>/<repo>/actions/permissions/workflow --jq '.'
 仓库同时是一个**纯静态博客站点**：Agent 只负责往 `blog/` 写 Markdown，站点由前端在运行时读取并渲染，
 因此**新增文章不需要改任何前端代码**——推送即上线。
 
-站点现在部署为一个 **Cloudflare Worker + 静态资产**：`worker.js` 是入口，
-`dist/` 经 `wrangler.toml` 的 `[assets]` 挂载到 `env.ASSETS`。与旧 Pages 部署的关键差别：
+站点部署为一个 **Cloudflare Worker + 静态资产**：`dist/` 经 `wrangler.toml` 的 `[assets]`
+挂载，`worker.js` 作为动态入口保留备用。**绝大多数请求根本不会进 Worker**——
+静态文件由边缘直出，免费且不限量。与旧 Pages 部署的关键差别：
 
 | Pages | Workers |
 |---|---|
 | `pages_build_output_dir` | `[assets].directory = "dist"` |
-| Pages Functions 先于静态资产执行 | 默认资产优先，已设 `run_worker_first = true` 让 `worker.js` 接管每个请求 |
-| 自动识别 `index.html` / `404.html` | 需显式声明 `not_found_handling`，此处由 `worker.js` 自行兜底，故设为 `none` |
+| Pages Functions 先于静态资产执行 | 默认资产优先；只有 `run_worker_first` 列出的动态路径先跑 Worker |
+| 自动识别 `index.html` / `404.html` | 需显式声明 `not_found_handling = "404-page"` |
 | `_headers` / `_redirects` | Workers 原生同样支持，两个文件保留在 `dist/` 中 |
 
-> ⚠️ `_headers` / `_redirects` 在 Workers 静态资产里**依然原生生效**；
-> `worker.js` 在 `run_worker_first = true` 模式下再显式注入一次安全头、处理 `/feed` 与
-> `/post/*` 回退，用于保证行为与旧 Pages 完全一致（同名头被覆盖为同一取值）。
+> ✅ `_headers` / `_redirects` 在 Workers 静态资产里**依然原生生效**，
+> 安全头、`/feed` 跳转、`/post/*` SPA 回退与 404 都由资产层处理，不需要跑 Worker。
+> `worker.js` 保留这些分支只是给动态路径做兜底。
 
 ### 架构
 
@@ -255,7 +256,7 @@ gh api /repos/<owner>/<repo>/actions/permissions/workflow --jq '.'
 - **全外链**：HTML 通过 `<link>` / `<script src>` 引用 `assets/` 下的样式与脚本，无内联样式表；
   渲染依赖走 CDN（marked / DOMPurify / highlight.js / KaTeX）。
 - **样式分离**：`assets/css/base.css` 管整页与组件，`assets/css/markdown.css` 专管 Markdown 正文排版。
-- **路由**：真实路径（`/`、`/post/<中文分类>/<中文主题>/`），由 `worker.js` 与 `_redirects` 的
+- **路由**：真实路径（`/`、`/post/<中文分类>/<中文主题>/`），由 `_redirects` 的
   `/post/* → /index.html 200` 做 SPA 回退；链接走 History API，中键/新标签页打开等原生行为不受影响。
 - **交互**：站内搜索、分类筛选、文章目录（TOC）、代码一键复制、阅读进度、上下篇导航、明暗主题、中英切换。
 
@@ -291,6 +292,33 @@ SITE_URL=https://你的域名 npm run deploy   # = node build.mjs && wrangler de
 > 否则 RSS / sitemap 仍指向旧的 Pages 地址。确认 Workers 正常后即可删除原 Pages 项目，
 > 避免两套部署并存。
 
+### 请求计费与扩展 Worker 功能
+
+Workers 的计费单位是「**Worker 脚本被调用的次数**」，不是 HTTP 请求总数。
+
+| 请求类型 | 是否跑 Worker | 计费 |
+|---|---|---|
+| 命中 `dist/` 的静态文件（HTML/CSS/JS/图片/Markdown） | ❌ | 免费、不限量 |
+| `_redirects` / `_headers` / `404-page` 处理的请求 | ❌ | 免费、不限量 |
+| `run_worker_first` 列出的动态路径 | ✅ | 计入 Worker 请求数 |
+| 未命中资产、需动态兜底的请求 | ✅ | 计入 Worker 请求数 |
+
+免费版 10 万次/天（UTC 重置），付费版 $5/月含 1000 万次/月，超出 $0.30/百万次。
+**不要**把 `run_worker_first` 改回 `true`：那会让每个 CSS、每张图片都变成一次计费调用，
+一次页面打开十几个；免费版超额后这些请求还会直接返回 429 而不是退回静态资产，等于站点挂掉。
+
+**后续要加功能**（计数器、评论、订阅、鉴权、动态 API 等）：
+
+1. 在 `wrangler.toml` 的 `run_worker_first` 数组里登记路径（目前占位为 `["/api/*"]`）；
+   若新功能要作用于**已存在的静态资产路径**（例如给 `/blog/*.md` 加鉴权），这一步是必须的，
+   因为默认资产优先会绕过 Worker。
+2. 在 `worker.js` 的 `fetch()` 顶部「扩展点」按 `url.pathname` 分派，需要静态文件时用
+   `env.ASSETS.fetch()` 取回。
+3. 需要绑定 KV / D1 / R2 / 环境变量时，加在 `wrangler.toml` 顶层即可，`worker.js` 通过 `env` 读取。
+
+只新增 `/api/*` 这类路径时其实不加数组项也会落到 Worker（未命中资产即进入 Worker），
+但显式登记更清晰，也方便以后对静态路径加逻辑。
+
 ### 本地预览
 
 ```bash
@@ -305,4 +333,4 @@ npm run dev       # = node build.mjs && wrangler dev
 - 正文排版（表格、代码块、公式）→ `assets/css/markdown.css`
 - 交互逻辑 → `assets/js/app.js`
 - 站点标题 / 描述 / 默认域名 → `index.html` 与 `build.mjs` 顶部的 `SITE_URL`
-- Worker 行为（安全头、重定向、SPA 回退、404）→ `worker.js` 与 `wrangler.toml`
+- 动态功能（接口、鉴权、计数、A/B）→ `worker.js` 的「扩展点」+ `wrangler.toml` 的 `run_worker_first`

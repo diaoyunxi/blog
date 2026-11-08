@@ -1,17 +1,19 @@
 /*
  * worker.js — Cloudflare Workers 入口（Static Assets）
- * 职责（在 run_worker_first 模式下接管全部请求，兜底 Pages 时代的行为）：
- *   1. 服务静态资产（dist/）
- *   2. /feed           → 301 到 /rss.xml
- *   3. /post/<slug>/  → SPA 外壳 index.html（200）
- *   4. 其余未匹配       → 404.html（404）
- *   5. 注入安全响应头 + 缓存策略
+ * 何时会执行到这里（其余请求由资产层直出，0 调用、0 费用）：
+ *   1. wrangler.toml 的 run_worker_first 列出的动态路径（目前是 /api/*）
+ *   2. 未命中任何静态资产、且未被 _redirects / not_found_handling 接住的请求
  *
- * 注：Workers 静态资产同样原生支持 _headers / _redirects，二者仍保留在 dist/ 中；
- * 这里再显式处理一次，保证安全头、/feed 与 /post/* 回退与旧 Pages 完全一致。
+ * 静态资产的常规工作已交给资产层原生能力：
+ *   _headers（安全头 + 缓存）、_redirects（/feed 301、/post/* → index.html 200）、
+ *   not_found_handling = "404-page"。
+ * 下面这些分支是动态路径的兜底，保证即使经由 Worker 返回，行为也与 Pages 一致。
+ *
+ * 👉 后续加功能：在 wrangler.toml 的 run_worker_first 数组里登记路径，
+ *    然后在本文件的 fetch() 顶部按 pathname 分派即可（见 "扩展点" 注释）。
  */
 
-// 安全头（对应 _headers 的 /* 规则）
+// 安全头（与 _headers 的 /* 规则一致；动态响应补一份，静态资产由资产层注入）
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -41,6 +43,10 @@ function getAsset(env, request, origin, path) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    // ---- 扩展点：未来新增的动态接口在这里分派 ----
+    // if (url.pathname.startsWith("/api/")) return handleApi(request, env);
+    // 别忘了把路径登记进 wrangler.toml 的 run_worker_first 数组。
     const origin = url.origin;
     const pathname = url.pathname;
 
