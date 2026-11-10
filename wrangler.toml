@@ -21,7 +21,7 @@ run_worker_first = ["/api/*"]
 
 # 未命中资产时由资产层直接返回 404.html；SPA 深链由 _redirects 的 200 rewrite 处理。
 # 两者都不需要调用 Worker；真正需要动态逻辑的请求仍会落到 worker.js。
-not_found_handling = "404-page"
+not_found_handling = "single-page-application"
 
 # 本地预览：npm run dev
 # 部署：    npm run deploy
